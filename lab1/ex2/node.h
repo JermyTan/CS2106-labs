@@ -4,12 +4,14 @@
     during grading so any changes in this file will be overwritten
 */
 
-typedef struct NODE {
+typedef struct NODE
+{
     int data;
     struct NODE *next;
 } node;
 
-typedef struct {
+typedef struct
+{
     node *head;
 } list;
 
