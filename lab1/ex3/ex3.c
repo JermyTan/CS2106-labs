@@ -50,7 +50,7 @@ int main(int argc, char **argv)
     lst->head = NULL;
 
     int instr;
-    while (fscanf(fp, "%d", &instr))
+    while (fscanf(fp, "%d", &instr) == 1)
     {
         run_instruction(lst, instr, fp);
     }
