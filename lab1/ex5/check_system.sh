@@ -2,19 +2,19 @@
 
 ####################
 # Lab 1 Exercise 5
-# Name:
-# Student No:
-# Lab Group: 
+# Name: Tan Kai Qun, Jeremy
+# Student No: A0136134N
+# Lab Group: 18
 ####################
 
 # Fill the below up
-hostname=
-machine_hardware=
-max_user_process_count=
-user_process_count=
-user_with_most_processes=
-mem_free_percentage=
-swap_free_percentage=
+hostname=$(uname -n)
+machine_hardware=$(echo "$(uname) $(uname -m)")
+max_user_process_count=$(ulimit -u)
+user_process_count=$(ps -U $(whoami) --no-headers | wc -l)
+user_with_most_processes=$(ps -eo user | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
+mem_free_percentage=$(free | awk '/Mem/ {print $4/$2 * 100.0}')
+swap_free_percentage=$(free | awk '/Swap/ {print $4/$2 * 100.0}')
 
 echo "Hostname: $hostname"
 echo "Machine Hardware: $machine_hardware"
