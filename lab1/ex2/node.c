@@ -21,14 +21,14 @@ int get_list_length(list *lst)
         return 0;
     }
 
-    int length = 1;
+    int length = 0;
     node *current_node = lst->head;
 
-    while (current_node->next != lst->head)
+    do
     {
-        current_node = current_node->next;
         length++;
-    }
+        current_node = current_node->next;
+    } while (current_node != lst->head);
 
     return length;
 }
@@ -40,8 +40,8 @@ node *get_node_at(list *lst, int index)
 
     while (current_node && current_index < index)
     {
-        current_node = current_node->next;
         current_index++;
+        current_node = current_node->next;
     }
 
     return current_node;
