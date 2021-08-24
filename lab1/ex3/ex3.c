@@ -46,6 +46,13 @@ int main(int argc, char **argv)
 
     // Rest of code logic here
     FILE *fp = fopen(fname, "r");
+
+    if (fp == NULL)
+    {
+        fprintf(stderr, "Error: invalid file %s\n", fname);
+        exit(1);
+    }
+
     list *lst = (list *)malloc(sizeof(list));
     lst->head = NULL;
 
