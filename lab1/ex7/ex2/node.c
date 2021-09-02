@@ -140,20 +140,6 @@ void rotate_list(list *lst, int offset)
     lst->head = current_node;
 }
 
-node *reverse(node *current_node, int length)
-{
-    if (length <= 1)
-    {
-        return current_node;
-    }
-
-    node *reversed_node = reverse(current_node->next, length - 1);
-    current_node->next->next = current_node;
-    current_node->next = NULL;
-
-    return reversed_node;
-}
-
 // Reverses the list, with the original "tail" node
 // becoming the new head node.
 void reverse_list(list *lst)
@@ -165,10 +151,21 @@ void reverse_list(list *lst)
         return;
     }
 
-    node *new_head = reverse(lst->head, length);
+    node *current_node = lst->head;
+    node *previous_node = NULL;
+    node *temp_node;
+
+    while (length--)
+    {
+        temp_node = current_node->next;
+        current_node->next = previous_node;
+        previous_node = current_node;
+        current_node = temp_node;
+    }
+
     // link last node (original head) -> next to new head
-    lst->head->next = new_head;
-    lst->head = new_head;
+    lst->head->next = previous_node;
+    lst->head = previous_node;
 }
 
 // Resets list to an empty state (no nodes) and frees

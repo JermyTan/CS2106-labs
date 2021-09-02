@@ -9,7 +9,7 @@
 
 # Fill the below up
 hostname=$(uname -n)
-machine_hardware=$(echo "$(uname) $(uname -m)")
+machine_hardware="$(uname) $(uname -m)"
 max_user_process_count=$(ulimit -u)
 user_process_count=$(ps -U $(whoami) --no-headers | wc -l)
 user_with_most_processes=$(ps -eo user | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
