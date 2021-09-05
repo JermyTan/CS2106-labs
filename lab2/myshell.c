@@ -21,6 +21,7 @@
 #define EXITED 1
 #define TERMINATING 2
 #define BACKGROUND_TASK_FLAG "&"
+#define AND_OPERATOR "&&"
 
 typedef struct
 {
@@ -45,14 +46,12 @@ void my_init(void)
 
 int get_shell_command_id(char *command)
 {
-    int i = 0;
-    while (SHELL_COMMANDS[i])
+    for (int i = 0; SHELL_COMMANDS[i]; i++)
     {
         if (strcmp(command, SHELL_COMMANDS[i]) == 0)
         {
             return i;
         }
-        i++;
     }
 
     // represents program command
@@ -62,13 +61,13 @@ int get_shell_command_id(char *command)
 // returns 1 if should run program in background else 0
 int check_should_run_in_background(char **args, size_t num_args)
 {
-    if (num_args <= 2 || strcmp(args[num_args - 2], BACKGROUND_TASK_FLAG) != 0)
+    if (num_args <= 1 || strcmp(args[num_args - 1], BACKGROUND_TASK_FLAG) != 0)
     {
         return 0;
     }
 
     // remove "&" from args
-    args[num_args - 2] = NULL;
+    args[num_args - 1] = NULL;
     return 1;
 }
 
@@ -144,7 +143,9 @@ void exec_terminate(pid_t pid)
     process *child_process = get_child_process(pid);
 
     // if child process with given pid doesn't exists or child process has already exited
-    if (!child_process || child_process->state_id == EXITED || kill(pid, SIGTERM) != 0)
+    if (!child_process ||
+        child_process->state_id == EXITED ||
+        kill(pid, SIGTERM) != 0)
     {
         return;
     }
@@ -152,14 +153,10 @@ void exec_terminate(pid_t pid)
     child_process->state_id = TERMINATING;
 }
 
-void exec_program(char *program, char **args, int should_run_in_background)
+// returns the exit status of the executed program
+// 0 is returned if the executed program runs in background
+int exec_program(char *program, char **args, int should_run_in_background)
 {
-    if (access(program, F_OK) != 0)
-    {
-        printf("%s not found\n", program);
-        return;
-    }
-
     pid_t pid = fork();
 
     if (pid == 0)
@@ -178,20 +175,23 @@ void exec_program(char *program, char **args, int should_run_in_background)
     {
         printf("Child[%d] in background\n", new_process->pid);
     }
-    else if (wait(&(new_process->status)) == new_process->pid)
+    else if (wait(&(new_process->status)) == new_process->pid && is_terminated_status(new_process->status))
     {
         new_process->state_id = EXITED;
     }
+
+    return new_process->state_id == EXITED ? WEXITSTATUS(new_process->status) : 0;
 }
 
-void my_process_command(size_t num_tokens, char **tokens)
+// returns 0 if the command is executed without errors else 1
+int exec_command(char **args, size_t num_args)
 {
-    if (num_tokens <= 1)
+    if (num_args <= 0)
     {
-        return;
+        return 1;
     }
 
-    char *command = *tokens;
+    char *command = *args;
 
     switch (get_shell_command_id(command))
     {
@@ -199,22 +199,77 @@ void my_process_command(size_t num_tokens, char **tokens)
         exec_info();
         break;
     case WAIT:
-        exec_wait(atoi(tokens[1]));
+        if (num_args < 2)
+        {
+            printf("wait: Missing arguments\n");
+            return 1;
+        }
+        exec_wait(atoi(args[1]));
         break;
     case TERMINATE:
-        exec_terminate(atoi(tokens[1]));
+        if (num_args < 2)
+        {
+            printf("terminate: Missing arguments\n");
+            return 1;
+        }
+        exec_terminate(atoi(args[1]));
         break;
     default:
-        exec_program(command, tokens, check_should_run_in_background(tokens, num_tokens));
+        if (access(command, F_OK) != 0)
+        {
+            printf("%s not found\n", command);
+            return 1;
+        }
+
+        int exit_status = exec_program(command, args, check_should_run_in_background(args, num_args));
+        if (exit_status != 0)
+        {
+            printf("%s failed\n", command);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+void my_process_command(size_t num_tokens, char **tokens)
+{
+    size_t start = 0;
+    for (size_t end = 0; end < num_tokens; end++)
+    {
+        if (tokens[end] && strcmp(tokens[end], AND_OPERATOR) == 0)
+        {
+            tokens[end] = NULL;
+        }
+
+        if (tokens[end] == NULL)
+        {
+            if (exec_command(tokens + start, end - start) != 0)
+            {
+                break;
+            }
+
+            start = end + 1;
+        }
     }
 }
 
 void my_quit(void)
 {
     // Clean up function, called after "quit" is entered as a user command
+
+    process *child_process;
     while (num_child_processes)
     {
-        free(child_processes[--num_child_processes]);
+        child_process = child_processes[--num_child_processes];
+
+        if (child_process->state_id != EXITED)
+        {
+            kill(child_process->pid, SIGTERM);
+            waitpid(child_process->pid, &(child_process->status), 0);
+        }
+
+        free(child_process);
     }
     free(child_processes);
     printf("Goodbye!\n");
