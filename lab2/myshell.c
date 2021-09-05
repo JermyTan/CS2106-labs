@@ -197,8 +197,8 @@ int exec_program(char *program, char **args, int should_run_in_background, char 
     if (pid == 0)
     {
         int in_fd = input_file ? open(input_file, O_RDONLY) : STDIN_FILENO;
-        int out_fd = output_file ? open(output_file, O_WRONLY | O_CREAT, 0777) : STDOUT_FILENO;
-        int err_fd = error_file ? open(error_file, O_WRONLY | O_CREAT, 0777) : STDERR_FILENO;
+        int out_fd = output_file ? open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0777) : STDOUT_FILENO;
+        int err_fd = error_file ? open(error_file, O_WRONLY | O_CREAT | O_TRUNC, 0777) : STDERR_FILENO;
 
         if (in_fd != STDIN_FILENO)
         {
