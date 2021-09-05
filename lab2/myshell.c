@@ -239,7 +239,7 @@ int exec_program(char *program, char **args, int should_run_in_background, char 
 }
 
 // returns 0 if the command is executed without errors else 1
-int exec_command(char **args, size_t num_args)
+int exec_command(char **args, size_t num_args, int is_chaining_commands)
 {
     if (num_args <= 0)
     {
@@ -295,7 +295,12 @@ int exec_command(char **args, size_t num_args)
                 output_file,
                 error_file) != 0)
         {
-            printf("%s failed\n", command);
+            // does not print if only running single command/program
+            if (is_chaining_commands)
+            {
+                printf("%s failed\n", command);
+            }
+
             return 1;
         }
     }
@@ -306,16 +311,18 @@ int exec_command(char **args, size_t num_args)
 void my_process_command(size_t num_tokens, char **tokens)
 {
     size_t start = 0;
+    int is_chaining_commands = 0; // 1 if && exists else 0
     for (size_t end = 0; end < num_tokens; end++)
     {
         if (tokens[end] && strcmp(tokens[end], AND_OPERATOR) == 0)
         {
             tokens[end] = NULL;
+            is_chaining_commands = 1;
         }
 
         if (tokens[end] == NULL)
         {
-            if (exec_command(tokens + start, end - start) != 0)
+            if (exec_command(tokens + start, end - start, is_chaining_commands) != 0)
             {
                 break;
             }
