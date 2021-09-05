@@ -19,9 +19,11 @@
 #define INFO 0
 #define WAIT 1
 #define TERMINATE 2
+#define FG 3
 #define RUNNING 0
 #define EXITED 1
 #define TERMINATING 2
+#define STOPPED 3
 #define BACKGROUND_TASK_FLAG "&"
 #define AND_OPERATOR "&&"
 #define INPUT_REDIR_OPERATOR "<"
@@ -37,18 +39,30 @@ typedef struct
 } process;
 
 const int MAX_PROGRAMS = 100;
-const char *PROCESS_STATE[] = {"Running", "Exited", "Terminating"};
-const char *SHELL_COMMANDS[] = {"info", "wait", "terminate", NULL};
+const char *PROCESS_STATE[] = {"Running", "Exited", "Terminating", "Stopped"};
+const char *SHELL_COMMANDS[] = {"info", "wait", "terminate", "fg", NULL};
 
 int num_child_processes;
 // history of all the child processes the shell has executed
 process **child_processes;
+// -1 if shell is not waiting else contains pid of process shell is waiting
+pid_t waiting_pid;
+// 0 if no signal was caught else 1
+int has_caught_signal;
+
+void signal_handler(int);
 
 void my_init(void)
 {
     // Initialize what you need here
     num_child_processes = 0;
     child_processes = (process **)malloc(MAX_PROGRAMS * sizeof(process *));
+    waiting_pid = -1;
+    has_caught_signal = 0;
+
+    // setup signal intercepters
+    signal(SIGTSTP, signal_handler);
+    signal(SIGINT, signal_handler);
 }
 
 int get_shell_command_id(char *command)
@@ -120,17 +134,55 @@ process *get_child_process(pid_t pid)
     return NULL;
 }
 
-void wait_to_terminate(process *child_process, int options)
+void signal_handler(int signum)
 {
-    if (!child_process ||
-        child_process->state_id == EXITED ||
-        waitpid(child_process->pid, &(child_process->status), options) != child_process->pid ||
-        !(WIFEXITED(child_process->status) || WIFSIGNALED(child_process->status)))
+    // do nth if shell is not waiting
+    if (waiting_pid < 0)
     {
         return;
     }
 
-    child_process->state_id = EXITED;
+    process *child_process = get_child_process(waiting_pid);
+
+    if (!child_process || child_process->state_id == EXITED || kill(waiting_pid, signum) != 0)
+    {
+        return;
+    }
+
+    has_caught_signal = 1;
+}
+
+void wait_to_terminate(process *child_process, int options)
+{
+    if (!child_process || child_process->state_id == EXITED)
+    {
+        return;
+    }
+
+    waiting_pid = child_process->pid;
+
+    if (waitpid(waiting_pid, &(child_process->status), options) == waiting_pid)
+    {
+        if (WIFEXITED(child_process->status) || WIFSIGNALED(child_process->status))
+        {
+            child_process->state_id = EXITED;
+        }
+
+        if (has_caught_signal && WIFSIGNALED(child_process->status))
+        {
+            printf("[%d] interrupted\n", waiting_pid);
+        }
+
+        if (has_caught_signal && WIFSTOPPED(child_process->status))
+        {
+            child_process->state_id = STOPPED;
+            printf("[%d] stopped\n", waiting_pid);
+        }
+    }
+
+    // reset state
+    waiting_pid = -1;
+    has_caught_signal = 0;
 }
 
 void exec_info()
@@ -162,7 +214,7 @@ void exec_info()
 void exec_wait(pid_t pid)
 {
     process *child_process = get_child_process(pid);
-    wait_to_terminate(child_process, 0);
+    wait_to_terminate(child_process, WUNTRACED);
 }
 
 void exec_terminate(pid_t pid)
@@ -175,6 +227,23 @@ void exec_terminate(pid_t pid)
     }
 
     child_process->state_id = TERMINATING;
+}
+
+void exec_fg(pid_t pid)
+{
+    process *child_process = get_child_process(pid);
+
+    if (!child_process ||
+        child_process->state_id != STOPPED ||
+        kill(pid, SIGCONT) != 0 ||
+        waitpid(pid, &(child_process->status), WCONTINUED) != pid ||
+        !WIFCONTINUED(child_process->status))
+
+    {
+        return;
+    }
+
+    wait_to_terminate(child_process, WUNTRACED);
 }
 
 // returns the exit status of the executed program
@@ -221,7 +290,7 @@ int exec_program(char *program, char **args, int should_run_in_background, char 
     }
     else
     {
-        wait_to_terminate(new_process, 0);
+        wait_to_terminate(new_process, WUNTRACED);
     }
 
     return new_process->state_id == EXITED ? WEXITSTATUS(new_process->status) : 0;
@@ -257,6 +326,14 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
             return 1;
         }
         exec_terminate(atoi(args[1]));
+        break;
+    case FG:
+        if (num_args < 2)
+        {
+            printf("fg: Missing argument(s)\n");
+            return 1;
+        }
+        exec_fg(atoi(args[1]));
         break;
     default:
         if (access(command, F_OK) != 0)
