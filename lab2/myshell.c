@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "myshell.h"
@@ -71,6 +72,24 @@ int check_should_run_in_background(char **args, size_t num_args)
     return 1;
 }
 
+process *get_child_process(pid_t pid)
+{
+    for (int i = 0; i < num_child_processes; i++)
+    {
+        if (child_processes[i]->pid == pid)
+        {
+            return child_processes[i];
+        }
+    }
+
+    return NULL;
+}
+
+int is_terminated_status(int status)
+{
+    return WIFEXITED(status) || WIFSIGNALED(status);
+}
+
 void exec_info()
 {
     process *child_process;
@@ -79,12 +98,12 @@ void exec_info()
         child_process = child_processes[i];
 
         // refresh status for terminating / background running tasks
-        if (child_process->state_id != EXITED && waitpid(child_process->pid, &(child_process->status), WNOHANG) != 0)
+        if (
+            child_process->state_id != EXITED &&
+            waitpid(child_process->pid, &(child_process->status), WNOHANG) == child_process->pid &&
+            is_terminated_status(child_process->status))
         {
-            if (WIFEXITED(child_process->status))
-            {
-                child_process->state_id = EXITED;
-            }
+            child_process->state_id = EXITED;
         }
 
         if (child_process->state_id == EXITED)
@@ -101,6 +120,36 @@ void exec_info()
                    PROCESS_STATE[child_process->state_id]);
         }
     }
+}
+
+void exec_wait(pid_t pid)
+{
+    process *child_process = get_child_process(pid);
+
+    // if child process with given pid doesn't exists or child process has already exited
+    if (
+        !child_process ||
+        child_process->state_id == EXITED ||
+        waitpid(pid, &(child_process->status), 0) != pid ||
+        !is_terminated_status(child_process->status))
+    {
+        return;
+    }
+
+    child_process->state_id = EXITED;
+}
+
+void exec_terminate(pid_t pid)
+{
+    process *child_process = get_child_process(pid);
+
+    // if child process with given pid doesn't exists or child process has already exited
+    if (!child_process || child_process->state_id == EXITED || kill(pid, SIGTERM) != 0)
+    {
+        return;
+    }
+
+    child_process->state_id = TERMINATING;
 }
 
 void exec_program(char *program, char **args, int should_run_in_background)
@@ -129,9 +178,8 @@ void exec_program(char *program, char **args, int should_run_in_background)
     {
         printf("Child[%d] in background\n", new_process->pid);
     }
-    else
+    else if (wait(&(new_process->status)) == new_process->pid)
     {
-        wait(&(new_process->status));
         new_process->state_id = EXITED;
     }
 }
@@ -151,10 +199,10 @@ void my_process_command(size_t num_tokens, char **tokens)
         exec_info();
         break;
     case WAIT:
-        printf("wait\n");
+        exec_wait(atoi(tokens[1]));
         break;
     case TERMINATE:
-        printf("terminate\n");
+        exec_terminate(atoi(tokens[1]));
         break;
     default:
         exec_program(command, tokens, check_should_run_in_background(tokens, num_tokens));
