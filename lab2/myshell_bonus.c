@@ -154,7 +154,7 @@ void signal_handler(int signum)
 
 void wait_to_terminate(process *child_process, int options)
 {
-    if (!child_process || child_process->state_id == EXITED)
+    if (!child_process || child_process->state_id == EXITED || child_process->state_id == STOPPED)
     {
         return;
     }
@@ -214,6 +214,7 @@ void exec_info()
 void exec_wait(pid_t pid)
 {
     process *child_process = get_child_process(pid);
+
     wait_to_terminate(child_process, WUNTRACED);
 }
 
@@ -238,11 +239,11 @@ void exec_fg(pid_t pid)
         kill(pid, SIGCONT) != 0 ||
         waitpid(pid, &(child_process->status), WCONTINUED) != pid ||
         !WIFCONTINUED(child_process->status))
-
     {
         return;
     }
 
+    child_process->state_id = RUNNING;
     wait_to_terminate(child_process, WUNTRACED);
 }
 
@@ -274,8 +275,25 @@ int exec_program(char *program, char **args, int should_run_in_background, char 
             close(err_fd);
         }
 
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGINT, SIG_DFL);
+
+        int t = 0;
+        do
+        {
+            printf("seconds: %d\n", t);
+            sleep(1);
+        } while (t++ < 20);
+        exit(0);
+
         execv(program, args);
         exit(1);
+    }
+    else
+    {
+        // setup signal intercepters
+        signal(SIGTSTP, signal_handler);
+        signal(SIGINT, signal_handler);
     }
 
     process *new_process = (process *)malloc(sizeof(process));
