@@ -222,7 +222,10 @@ void exec_terminate(pid_t pid)
 {
     process *child_process = get_child_process(pid);
 
-    if (!child_process || child_process->state_id == EXITED || kill(pid, SIGTERM) != 0)
+    if (!child_process ||
+        child_process->state_id == EXITED ||
+        kill(pid, SIGTERM) != 0 ||
+        (child_process->state_id == STOPPED && kill(pid, SIGCONT) != 0))
     {
         return;
     }
@@ -429,6 +432,12 @@ void my_quit(void)
         if (child_process->state_id != EXITED)
         {
             kill(child_process->pid, SIGTERM);
+
+            if (child_process->state_id == STOPPED)
+            {
+                kill(child_process->pid, SIGCONT);
+            }
+
             waitpid(child_process->pid, &(child_process->status), 0);
         }
 
