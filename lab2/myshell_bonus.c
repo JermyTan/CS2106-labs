@@ -214,7 +214,6 @@ void exec_info()
 void exec_wait(pid_t pid)
 {
     process *child_process = get_child_process(pid);
-
     wait_to_terminate(child_process, WUNTRACED);
 }
 
@@ -423,6 +422,8 @@ void my_process_command(size_t num_tokens, char **tokens)
 void my_quit(void)
 {
     // Clean up function, called after "quit" is entered as a user command
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGINT, SIG_DFL);
 
     process *child_process;
     while (num_child_processes)
