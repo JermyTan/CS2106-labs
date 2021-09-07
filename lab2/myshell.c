@@ -318,6 +318,7 @@ void my_process_command(size_t num_tokens, char **tokens)
             }
 
             start = end + 1;
+            is_chaining_commands = 0;
         }
     }
 }
