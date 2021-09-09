@@ -1,0 +1,9 @@
+#!/bin/bash
+end=$((SECONDS+20))
+
+while [ $SECONDS -lt $end ]; do
+    echo $SECONDS
+    sleep 1
+done
+
+exit 7

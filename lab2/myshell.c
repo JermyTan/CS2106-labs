@@ -225,12 +225,12 @@ int exec_program(char *program, char **args, int should_run_in_background, char 
     return new_process->state_id == EXITED ? WEXITSTATUS(new_process->status) : 0;
 }
 
-// returns 0 if the command is executed without errors else 1
+// returns 0 if the command is executed without errors else -1
 int exec_command(char **args, size_t num_args, int is_chaining_commands)
 {
     if (num_args <= 0)
     {
-        return 1;
+        return -1;
     }
 
     char *command = *args;
@@ -244,7 +244,7 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
         if (num_args < 2)
         {
             printf("wait: Missing argument(s)\n");
-            return 1;
+            return -1;
         }
         exec_wait(atoi(args[1]));
         break;
@@ -252,7 +252,7 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
         if (num_args < 2)
         {
             printf("terminate: Missing argument(s)\n");
-            return 1;
+            return -1;
         }
         exec_terminate(atoi(args[1]));
         break;
@@ -260,7 +260,7 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
         if (access(command, F_OK) != 0)
         {
             printf("%s not found\n", command);
-            return 1;
+            return -1;
         }
 
         int should_run_in_background = check_should_run_in_background(args, &(num_args));
@@ -271,7 +271,7 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
         if (input_file && access(input_file, F_OK) != 0)
         {
             printf("%s does not exist\n", input_file);
-            return 1;
+            return -1;
         }
 
         if (exec_program(
@@ -288,7 +288,7 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
                 printf("%s failed\n", command);
             }
 
-            return 1;
+            return -1;
         }
     }
 
