@@ -50,7 +50,7 @@ static int get_shell_command_id(char *command);
 static int check_should_run_in_background(char **args, size_t *num_args);
 static void check_redirection_files(char **args, size_t *num_args, char **input_file, char **output_file, char **error_file);
 static process *get_child_process(pid_t pid);
-static void wait_to_terminate(process *child_process, int options);
+static void refresh_process_state(process *child_process, int options);
 static void exec_info();
 static void exec_wait(pid_t pid);
 static void exec_terminate(pid_t pid);
@@ -112,8 +112,8 @@ void my_quit(void)
 
         if (child_process->state_id != EXITED)
         {
-            check_syscall(kill(child_process->pid, SIGTERM), "my_quit: kill error");
-            wait_to_terminate(child_process, 0);
+            check_syscall(kill(child_process->pid, SIGTERM), "my_quit: kill SIGTERM error");
+            refresh_process_state(child_process, 0);
         }
 
         free(child_process);
@@ -189,11 +189,11 @@ static process *get_child_process(pid_t pid)
     return NULL;
 }
 
-static void wait_to_terminate(process *child_process, int options)
+static void refresh_process_state(process *child_process, int options)
 {
     if (!child_process ||
         child_process->state_id == EXITED ||
-        check_syscall(waitpid(child_process->pid, &(child_process->status), options), "wait_to_terminate: waitpid error") != child_process->pid ||
+        check_syscall(waitpid(child_process->pid, &(child_process->status), options), "refresh_process_state: waitpid error") != child_process->pid ||
         !(WIFEXITED(child_process->status) || WIFSIGNALED(child_process->status)))
     {
         return;
@@ -209,8 +209,7 @@ static void exec_info()
     {
         child_process = child_processes[i];
 
-        // refresh status for terminating / background running tasks
-        wait_to_terminate(child_process, WNOHANG);
+        refresh_process_state(child_process, WNOHANG);
 
         if (child_process->state_id == EXITED)
         {
@@ -231,14 +230,14 @@ static void exec_info()
 static void exec_wait(pid_t pid)
 {
     process *child_process = get_child_process(pid);
-    wait_to_terminate(child_process, 0);
+    refresh_process_state(child_process, 0);
 }
 
 static void exec_terminate(pid_t pid)
 {
     process *child_process = get_child_process(pid);
 
-    if (!child_process || child_process->state_id == EXITED || check_syscall(kill(pid, SIGTERM), "exec_terminate: kill error") != 0)
+    if (!child_process || child_process->state_id == EXITED || check_syscall(kill(pid, SIGTERM), "exec_terminate: kill SIGTERM error") != 0)
     {
         return;
     }
@@ -252,23 +251,23 @@ static int exec_program(char *program, char **args, int should_run_in_background
 
     if (pid == 0)
     {
-        int in_fd = input_file ? check_syscall(open(input_file, O_RDONLY), "exec_program: open error") : STDIN_FILENO;
-        int out_fd = output_file ? check_syscall(open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error") : STDOUT_FILENO;
-        int err_fd = error_file ? check_syscall(open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error") : STDERR_FILENO;
+        int in_fd = input_file ? check_syscall(open(input_file, O_RDONLY), "exec_program: open input_file error") : STDIN_FILENO;
+        int out_fd = output_file ? check_syscall(open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open output_file error") : STDOUT_FILENO;
+        int err_fd = error_file ? check_syscall(open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error_file error") : STDERR_FILENO;
 
         if (in_fd != STDIN_FILENO)
         {
-            check_syscall(dup2(in_fd, STDIN_FILENO), "exec_program: dup2 error");
+            check_syscall(dup2(in_fd, STDIN_FILENO), "exec_program: dup2 in_fd error");
             check_syscall(close(in_fd), "exec_program: close error");
         }
         if (out_fd != STDOUT_FILENO)
         {
-            check_syscall(dup2(out_fd, STDOUT_FILENO), "exec_program: dup2 error");
+            check_syscall(dup2(out_fd, STDOUT_FILENO), "exec_program: dup2 out_fd error");
             check_syscall(close(out_fd), "exec_program: close error");
         }
         if (err_fd != STDERR_FILENO)
         {
-            check_syscall(dup2(err_fd, STDERR_FILENO), "exec_program: dup2 error");
+            check_syscall(dup2(err_fd, STDERR_FILENO), "exec_program: dup2 err_fd error");
             check_syscall(close(err_fd), "exec_program: close error");
         }
 
@@ -287,7 +286,7 @@ static int exec_program(char *program, char **args, int should_run_in_background
     }
     else
     {
-        wait_to_terminate(new_process, 0);
+        refresh_process_state(new_process, 0);
     }
 
     return new_process->state_id == EXITED ? WEXITSTATUS(new_process->status) : 0;
