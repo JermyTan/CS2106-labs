@@ -36,12 +36,38 @@ typedef struct
     int status;
 } process;
 
-const char *PROCESS_STATE[] = {"Running", "Exited", "Terminating"};
-const char *SHELL_COMMANDS[] = {"info", "wait", "terminate", NULL};
+static const char *PROCESS_STATE[] = {"Running", "Exited", "Terminating"};
+static const char *SHELL_COMMANDS[] = {"info", "wait", "terminate", NULL};
 
-int num_child_processes;
+static int num_child_processes;
 // history of all the child processes the shell has executed
-process *child_processes[MAX_PROCESSES];
+static process *child_processes[MAX_PROCESSES];
+
+/* helper function prototypes */
+// returns id corresponding to given shell commands, -1 is returned for user program command
+static int get_shell_command_id(char *command);
+// returns 1 if should run program in background else 0
+static int check_should_run_in_background(char **args, size_t *num_args);
+static void check_redirection_files(char **args, size_t *num_args, char **input_file, char **output_file, char **error_file);
+static process *get_child_process(pid_t pid);
+static void wait_to_terminate(process *child_process, int options);
+static void exec_info();
+static void exec_wait(pid_t pid);
+static void exec_terminate(pid_t pid);
+// returns the exit status of the executed program
+// 0 is returned if the executed program runs in background
+static int exec_program(char *program, char **args, int should_run_in_background, char *input_file, char *output_file, char *error_file);
+// returns 0 if the command is executed without errors else -1
+static int exec_command(char **args, size_t num_args, int is_chaining_commands);
+
+static int check_syscall(int value, const char *error_msg)
+{
+    if (value == -1)
+    {
+        perror(error_msg);
+    }
+    return value;
+}
 
 void my_init(void)
 {
@@ -49,7 +75,53 @@ void my_init(void)
     num_child_processes = 0;
 }
 
-int get_shell_command_id(char *command)
+void my_process_command(size_t num_tokens, char **tokens)
+{
+    size_t start = 0;
+    int is_chaining_commands = 0; // 1 if && exists else 0
+
+    for (size_t end = 0; end < num_tokens; end++)
+    {
+        if (tokens[end] && strcmp(tokens[end], AND_OPERATOR) == 0)
+        {
+            tokens[end] = NULL;
+            is_chaining_commands = 1;
+        }
+
+        if (tokens[end] == NULL)
+        {
+            if (exec_command(tokens + start, end - start, is_chaining_commands) != 0)
+            {
+                break;
+            }
+
+            start = end + 1;
+            is_chaining_commands = 0;
+        }
+    }
+}
+
+void my_quit(void)
+{
+    // Clean up function, called after "quit" is entered as a user command
+
+    process *child_process;
+    while (num_child_processes)
+    {
+        child_process = child_processes[--num_child_processes];
+
+        if (child_process->state_id != EXITED)
+        {
+            check_syscall(kill(child_process->pid, SIGTERM), "my_quit: kill error");
+            wait_to_terminate(child_process, 0);
+        }
+
+        free(child_process);
+    }
+    printf("Goodbye!\n");
+}
+
+static int get_shell_command_id(char *command)
 {
     for (int i = 0; SHELL_COMMANDS[i]; i++)
     {
@@ -63,8 +135,7 @@ int get_shell_command_id(char *command)
     return -1;
 }
 
-// returns 1 if should run program in background else 0
-int check_should_run_in_background(char **args, size_t *num_args)
+static int check_should_run_in_background(char **args, size_t *num_args)
 {
     if (*num_args <= 1 || strcmp(args[*num_args - 1], BACKGROUND_TASK_FLAG) != 0)
     {
@@ -76,7 +147,7 @@ int check_should_run_in_background(char **args, size_t *num_args)
     return 1;
 }
 
-void check_redirection_files(char **args, size_t *num_args, char **input_file, char **output_file, char **error_file)
+static void check_redirection_files(char **args, size_t *num_args, char **input_file, char **output_file, char **error_file)
 {
     size_t original_num_args = *num_args, i = 0;
 
@@ -105,7 +176,7 @@ void check_redirection_files(char **args, size_t *num_args, char **input_file, c
     }
 }
 
-process *get_child_process(pid_t pid)
+static process *get_child_process(pid_t pid)
 {
     for (int i = 0; i < num_child_processes; i++)
     {
@@ -118,11 +189,11 @@ process *get_child_process(pid_t pid)
     return NULL;
 }
 
-void wait_to_terminate(process *child_process, int options)
+static void wait_to_terminate(process *child_process, int options)
 {
     if (!child_process ||
         child_process->state_id == EXITED ||
-        waitpid(child_process->pid, &(child_process->status), options) != child_process->pid ||
+        check_syscall(waitpid(child_process->pid, &(child_process->status), options), "wait_to_terminate: waitpid error") != child_process->pid ||
         !(WIFEXITED(child_process->status) || WIFSIGNALED(child_process->status)))
     {
         return;
@@ -131,7 +202,7 @@ void wait_to_terminate(process *child_process, int options)
     child_process->state_id = EXITED;
 }
 
-void exec_info()
+static void exec_info()
 {
     process *child_process;
     for (int i = 0; i < num_child_processes; i++)
@@ -157,17 +228,17 @@ void exec_info()
     }
 }
 
-void exec_wait(pid_t pid)
+static void exec_wait(pid_t pid)
 {
     process *child_process = get_child_process(pid);
     wait_to_terminate(child_process, 0);
 }
 
-void exec_terminate(pid_t pid)
+static void exec_terminate(pid_t pid)
 {
     process *child_process = get_child_process(pid);
 
-    if (!child_process || child_process->state_id == EXITED || kill(pid, SIGTERM) != 0)
+    if (!child_process || child_process->state_id == EXITED || check_syscall(kill(pid, SIGTERM), "exec_terminate: kill error") != 0)
     {
         return;
     }
@@ -175,36 +246,33 @@ void exec_terminate(pid_t pid)
     child_process->state_id = TERMINATING;
 }
 
-// returns the exit status of the executed program
-// 0 is returned if the executed program runs in background
-int exec_program(char *program, char **args, int should_run_in_background, char *input_file, char *output_file, char *error_file)
+static int exec_program(char *program, char **args, int should_run_in_background, char *input_file, char *output_file, char *error_file)
 {
-    pid_t pid = fork();
+    pid_t pid = check_syscall(fork(), "exec_program: fork error");
 
     if (pid == 0)
     {
-        int in_fd = input_file ? open(input_file, O_RDONLY) : STDIN_FILENO;
-        int out_fd = output_file ? open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0777) : STDOUT_FILENO;
-        int err_fd = error_file ? open(error_file, O_WRONLY | O_CREAT | O_TRUNC, 0777) : STDERR_FILENO;
+        int in_fd = input_file ? check_syscall(open(input_file, O_RDONLY), "exec_program: open error") : STDIN_FILENO;
+        int out_fd = output_file ? check_syscall(open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error") : STDOUT_FILENO;
+        int err_fd = error_file ? check_syscall(open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error") : STDERR_FILENO;
 
-        if (in_fd >= 0 && in_fd != STDIN_FILENO)
+        if (in_fd != STDIN_FILENO)
         {
-            dup2(in_fd, STDIN_FILENO);
-            close(in_fd);
+            check_syscall(dup2(in_fd, STDIN_FILENO), "exec_program: dup2 error");
+            check_syscall(close(in_fd), "exec_program: close error");
         }
-        if (out_fd >= 0 && out_fd != STDOUT_FILENO)
+        if (out_fd != STDOUT_FILENO)
         {
-            dup2(out_fd, STDOUT_FILENO);
-            close(out_fd);
+            check_syscall(dup2(out_fd, STDOUT_FILENO), "exec_program: dup2 error");
+            check_syscall(close(out_fd), "exec_program: close error");
         }
-        if (err_fd >= 0 && err_fd != STDERR_FILENO)
+        if (err_fd != STDERR_FILENO)
         {
-            dup2(err_fd, STDERR_FILENO);
-            close(err_fd);
+            check_syscall(dup2(err_fd, STDERR_FILENO), "exec_program: dup2 error");
+            check_syscall(close(err_fd), "exec_program: close error");
         }
 
-        execv(program, args);
-        exit(1);
+        check_syscall(execv(program, args), "exec_program: execv error");
     }
 
     process *new_process = (process *)malloc(sizeof(process));
@@ -225,8 +293,7 @@ int exec_program(char *program, char **args, int should_run_in_background, char 
     return new_process->state_id == EXITED ? WEXITSTATUS(new_process->status) : 0;
 }
 
-// returns 0 if the command is executed without errors else -1
-int exec_command(char **args, size_t num_args, int is_chaining_commands)
+static int exec_command(char **args, size_t num_args, int is_chaining_commands)
 {
     if (num_args <= 0)
     {
@@ -293,50 +360,4 @@ int exec_command(char **args, size_t num_args, int is_chaining_commands)
     }
 
     return 0;
-}
-
-void my_process_command(size_t num_tokens, char **tokens)
-{
-    size_t start = 0;
-    int is_chaining_commands = 0; // 1 if && exists else 0
-
-    for (size_t end = 0; end < num_tokens; end++)
-    {
-        if (tokens[end] && strcmp(tokens[end], AND_OPERATOR) == 0)
-        {
-            tokens[end] = NULL;
-            is_chaining_commands = 1;
-        }
-
-        if (tokens[end] == NULL)
-        {
-            if (exec_command(tokens + start, end - start, is_chaining_commands) != 0)
-            {
-                break;
-            }
-
-            start = end + 1;
-            is_chaining_commands = 0;
-        }
-    }
-}
-
-void my_quit(void)
-{
-    // Clean up function, called after "quit" is entered as a user command
-
-    process *child_process;
-    while (num_child_processes)
-    {
-        child_process = child_processes[--num_child_processes];
-
-        if (child_process->state_id != EXITED)
-        {
-            kill(child_process->pid, SIGTERM);
-            waitpid(child_process->pid, &(child_process->status), 0);
-        }
-
-        free(child_process);
-    }
-    printf("Goodbye!\n");
 }
