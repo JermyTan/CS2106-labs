@@ -38,13 +38,12 @@ typedef struct
     int status;
 } process;
 
-const int MAX_PROGRAMS = 100;
 const char *PROCESS_STATE[] = {"Running", "Exited", "Terminating", "Stopped"};
 const char *SHELL_COMMANDS[] = {"info", "wait", "terminate", "fg", NULL};
 
 int num_child_processes;
 // history of all the child processes the shell has executed
-process **child_processes;
+process *child_processes[MAX_PROCESSES];
 // -1 if shell is not waiting else contains pid of process shell is waiting
 pid_t waiting_pid;
 // 0 if no signal was caught else 1
@@ -56,7 +55,6 @@ void my_init(void)
 {
     // Initialize what you need here
     num_child_processes = 0;
-    child_processes = (process **)malloc(MAX_PROGRAMS * sizeof(process *));
     waiting_pid = -1;
     has_caught_signal = 0;
 
@@ -446,6 +444,5 @@ void my_quit(void)
 
         free(child_process);
     }
-    free(child_processes);
     printf("Goodbye!\n");
 }

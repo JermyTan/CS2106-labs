@@ -36,19 +36,17 @@ typedef struct
     int status;
 } process;
 
-const int MAX_PROGRAMS = 100;
 const char *PROCESS_STATE[] = {"Running", "Exited", "Terminating"};
 const char *SHELL_COMMANDS[] = {"info", "wait", "terminate", NULL};
 
 int num_child_processes;
 // history of all the child processes the shell has executed
-process **child_processes;
+process *child_processes[MAX_PROCESSES];
 
 void my_init(void)
 {
     // Initialize what you need here
     num_child_processes = 0;
-    child_processes = (process **)malloc(MAX_PROGRAMS * sizeof(process *));
 }
 
 int get_shell_command_id(char *command)
@@ -340,6 +338,5 @@ void my_quit(void)
 
         free(child_process);
     }
-    free(child_processes);
     printf("Goodbye!\n");
 }
