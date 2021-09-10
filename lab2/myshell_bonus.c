@@ -265,12 +265,10 @@ static void signal_handler(int signum)
 
     process *child_process = get_child_process(waiting_pid);
 
-    if (!child_process || child_process->state_id == EXITED || check_syscall(kill(waiting_pid, signum), "signal_handler: kill error") != 0)
+    if (!child_process || child_process->state_id == EXITED || check_syscall(killpg(waiting_pid, signum), "signal_handler: killpg error") != 0)
     {
         return;
     }
-
-    // printf("waiting_pid: %d\nsignal: %d\n", waiting_pid, signum);
 
     has_caught_signal = 1;
 }
@@ -328,7 +326,7 @@ static void exec_fg(pid_t pid)
 
     if (!child_process ||
         child_process->state_id != STOPPED ||
-        check_syscall(kill(pid, SIGCONT), "exec_fg: kill SIGCONT error") != 0)
+        check_syscall(killpg(pid, SIGCONT), "exec_fg: killpg SIGCONT error") != 0)
     {
         return;
     }
