@@ -251,22 +251,21 @@ static int exec_program(char *program, char **args, int should_run_in_background
 
     if (pid == 0)
     {
-        int in_fd = input_file ? check_syscall(open(input_file, O_RDONLY), "exec_program: open input_file error") : STDIN_FILENO;
-        int out_fd = output_file ? check_syscall(open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open output_file error") : STDOUT_FILENO;
-        int err_fd = error_file ? check_syscall(open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error_file error") : STDERR_FILENO;
-
-        if (in_fd != STDIN_FILENO)
+        if (input_file)
         {
+            int in_fd = check_syscall(open(input_file, O_RDONLY), "exec_program: open input_file error");
             check_syscall(dup2(in_fd, STDIN_FILENO), "exec_program: dup2 in_fd error");
             check_syscall(close(in_fd), "exec_program: close error");
         }
-        if (out_fd != STDOUT_FILENO)
+        if (output_file)
         {
+            int out_fd = check_syscall(open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open output_file error");
             check_syscall(dup2(out_fd, STDOUT_FILENO), "exec_program: dup2 out_fd error");
             check_syscall(close(out_fd), "exec_program: close error");
         }
-        if (err_fd != STDERR_FILENO)
+        if (error_file)
         {
+            int err_fd = check_syscall(open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "exec_program: open error_file error");
             check_syscall(dup2(err_fd, STDERR_FILENO), "exec_program: dup2 err_fd error");
             check_syscall(close(err_fd), "exec_program: close error");
         }
