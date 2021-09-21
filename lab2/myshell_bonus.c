@@ -94,6 +94,7 @@ void my_process_command(size_t num_tokens, char **tokens)
     size_t start = 0;
     int is_chaining_commands = 0; // 1 if && exists else 0
 
+    // if ^Z or ^C is sent to a program, the other programs in the chain will continue to execute
     for (size_t end = 0; end < num_tokens; end++)
     {
         if (tokens[end] && strcmp(tokens[end], AND_OPERATOR) == 0)
@@ -134,7 +135,7 @@ void my_quit(void)
 
             if (child_process->state_id == STOPPED)
             {
-                check_syscall(kill(child_process->pid, SIGCONT), "my_quit: kill SIGCONT error");
+                check_syscall(killpg(child_process->pid, SIGCONT), "my_quit: killpg SIGCONT error");
             }
 
             refresh_process_state(child_process, 0);
@@ -229,7 +230,7 @@ static void refresh_process_state(process *child_process, int options)
             child_process->state_id = STOPPED;
         }
 
-        if (WIFCONTINUED(child_process->status))
+        if (child_process->state_id != TERMINATING && WIFCONTINUED(child_process->status))
         {
             child_process->state_id = RUNNING;
         }
@@ -302,6 +303,12 @@ static void exec_wait(pid_t pid)
 {
     process *child_process = get_child_process(pid);
 
+    // does not wait on stopped process
+    if (!child_process || child_process->state_id == STOPPED)
+    {
+        return;
+    }
+
     refresh_process_state(child_process, WUNTRACED);
 }
 
@@ -312,7 +319,7 @@ static void exec_terminate(pid_t pid)
     if (!child_process ||
         child_process->state_id == EXITED ||
         check_syscall(kill(pid, SIGTERM), "exec_terminate: kill SIGTERM error") != 0 ||
-        (child_process->state_id == STOPPED && check_syscall(kill(pid, SIGCONT), "exec_terminate: kill SIGCONT error") != 0))
+        (child_process->state_id == STOPPED && check_syscall(killpg(pid, SIGCONT), "exec_terminate: killpg SIGCONT error") != 0))
     {
         return;
     }
