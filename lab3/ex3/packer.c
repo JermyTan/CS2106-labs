@@ -1,17 +1,87 @@
 #include "packer.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <semaphore.h>
+
+#define NUM_COLORS 3
 
 // You can declare global variables here
+static sem_t color_mutexes[NUM_COLORS];
+static sem_t group_color_ball_mutexes[NUM_COLORS];
+static int ball_counts[NUM_COLORS];
+static int *ball_ids[NUM_COLORS];
+static int group_size;
 
-void packer_init(int balls_per_pack) {
+static int check_syscall(int value, const char *error_msg)
+{
+    if (value == -1)
+    {
+        perror(error_msg);
+    }
+    return value;
+}
+
+void packer_init(int balls_per_pack)
+{
     // Write initialization code here (called once at the start of the program).
-    // It is guaranteed that balls_per_pack >= 2.
+    group_size = balls_per_pack;
+
+    for (int i = 0; i < NUM_COLORS; i++)
+    {
+        ball_counts[i] = 0;
+        ball_ids[i] = (int *)malloc(sizeof(int) * group_size);
+        check_syscall(sem_init(&color_mutexes[i], 0, 1), "packer_init: sem_init color_mutexes error");
+        check_syscall(sem_init(&group_color_ball_mutexes[i], 0, 0), "packer_init: sem_init group_color_ball_mutexes error");
+    }
 }
 
-void packer_destroy(void) {
+void packer_destroy(void)
+{
     // Write deinitialization code here (called once at the end of the program).
+    for (int i = 0; i < NUM_COLORS; i++)
+    {
+        free(ball_ids[i]);
+        check_syscall(sem_destroy(&color_mutexes[i]), "packer_destroy: sem_destroy color_mutexes error");
+        check_syscall(sem_destroy(&group_color_ball_mutexes[i]), "packer_destroy: sem_destroy group_color_ball_mutexes error");
+    }
 }
 
-void pack_ball(int colour, int id, int *other_ids) {
-    // Write your code here.
-    // Remember to populate the array `other_ids` with the (balls_per_pack-1) other balls.
+void pack_ball(int colour, int id, int *other_ids)
+{
+    int other_id;
+    colour--;
+
+    check_syscall(sem_wait(&color_mutexes[colour]), "pack_ball: sem_wait color_mutexes error");
+
+    ball_ids[colour][ball_counts[colour]] = id;
+    ball_counts[colour]++;
+
+    if (ball_counts[colour] == group_size)
+    {
+        check_syscall(sem_post(&group_color_ball_mutexes[colour]), "pack_ball: sem_post group_color_ball_mutexes error");
+    }
+    else
+    {
+        check_syscall(sem_post(&color_mutexes[colour]), "pack_ball: sem_post color_mutexes error");
+    }
+
+    check_syscall(sem_wait(&group_color_ball_mutexes[colour]), "pack_ball: sem_wait group_color_ball_mutexes error");
+
+    for (int i = 0; i < group_size; i++)
+    {
+        if (ball_ids[colour][i] != id)
+        {
+            *other_ids++ = ball_ids[colour][i];
+        }
+    }
+    ball_counts[colour]--;
+
+    if (ball_counts[colour] == 0)
+    {
+        check_syscall(sem_post(&color_mutexes[colour]), "pack_ball: sem_post color_mutexes error");
+    }
+    else
+    {
+        check_syscall(sem_post(&group_color_ball_mutexes[colour]), "pack_ball: sem_post group_color_ball_mutexes error");
+    }
 }
