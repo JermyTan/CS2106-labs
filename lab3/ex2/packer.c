@@ -13,7 +13,7 @@ static int ball_ids[NUM_COLORS][GROUP_SIZE];
 
 static int check_syscall(int value, const char *error_msg)
 {
-    if (value == -1)
+    if (value != 0)
     {
         perror(error_msg);
     }
