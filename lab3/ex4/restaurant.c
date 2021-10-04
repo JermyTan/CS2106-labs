@@ -149,21 +149,18 @@ static void serve_table(table *existing_table, int queue_num)
     free_table_counts[existing_table->size - 1]--;
 }
 
-static table *assign_table(group *waiting_group, int queue_num)
+static int assign_table(group *waiting_group, int queue_num)
 {
-    table *assigned_table;
-
     for (int i = 0; i < total_num_tables; i++)
     {
         if (tables[i]->size == waiting_group->num_people && tables[i]->reserved_queue_num == queue_num)
         {
-            assigned_table = tables[i];
-            serve_table(assigned_table, waiting_group->queue_num);
-            break;
+            serve_table(tables[i], waiting_group->queue_num);
+            return tables[i]->id;
         }
     }
 
-    return assigned_table;
+    return -1;
 }
 
 void restaurant_init(int num_tables[5])
@@ -200,8 +197,8 @@ void restaurant_init(int num_tables[5])
     }
 
     // initialize mutex lock and conditional variable
-    pthread_mutex_init(&process_table_lock, NULL);
-    pthread_cond_init(&process_table_cond, NULL);
+    check_syscall(pthread_mutex_init(&process_table_lock, NULL), "restaurant_init: pthread_mutex_init process_table_lock error");
+    check_syscall(pthread_cond_init(&process_table_cond, NULL), "restaurant_init: pthread_cond_init process_table_cond error");
 }
 
 void restaurant_destroy(void)
@@ -215,13 +212,13 @@ void restaurant_destroy(void)
 
     free(tables);
 
-    pthread_mutex_destroy(&process_table_lock);
-    pthread_cond_destroy(&process_table_cond);
+    check_syscall(pthread_mutex_destroy(&process_table_lock), "restaurant_destroy: pthread_mutex_destroy process_table_lock error");
+    check_syscall(pthread_cond_destroy(&process_table_cond), "restaurant_destroy: pthread_cond_destroy process_table_cond error");
 }
 
 int request_for_table(group_state *state, int num_people)
 {
-    pthread_mutex_lock(&process_table_lock);
+    check_syscall(pthread_mutex_lock(&process_table_lock), "request_for_table: pthread_mutex_lock process_table_lock error");
 
     group *new_group = (group *)malloc(sizeof(group));
     new_group->num_people = num_people;
@@ -230,65 +227,48 @@ int request_for_table(group_state *state, int num_people)
 
     on_enqueue();
 
-    table *assigned_table;
-
     if (free_table_counts[num_people - 1] == 0 || queue_group_counts[num_people - 1] > 0)
     {
         enqueue(queue, new_group);
         queue_group_counts[num_people - 1]++;
 
-        while (1)
+        while (free_table_counts[num_people - 1] == 0 || get_group(queue, new_group->queue_num))
         {
-            pthread_cond_wait(&process_table_cond, &process_table_lock);
-
-            if (free_table_counts[num_people - 1] > 0 && !get_group(queue, new_group->queue_num))
-            {
-                break;
-            }
+            check_syscall(pthread_cond_wait(&process_table_cond, &process_table_lock), "request_for_table: pthread_cond_wait (process_table_cond, process_table_lock) error");
         }
 
-        assigned_table = assign_table(new_group, new_group->queue_num);
         queue_group_counts[num_people - 1]--;
+        state->table_id = assign_table(new_group, new_group->queue_num);
     }
     else
     {
-        assigned_table = assign_table(new_group, NOT_RESERVED);
+        state->table_id = assign_table(new_group, NOT_RESERVED);
     }
 
-    pthread_mutex_unlock(&process_table_lock);
-
-    state->num_people = num_people;
-    state->table_id = assigned_table->id;
+    check_syscall(pthread_mutex_unlock(&process_table_lock), "request_for_table: pthread_mutex_unlock process_table_lock error");
 
     free(new_group);
 
-    return assigned_table->id;
+    return state->table_id;
 }
 
 void leave_table(group_state *state)
 {
-    pthread_mutex_lock(&process_table_lock);
+    check_syscall(pthread_mutex_lock(&process_table_lock), "leave_table: pthread_mutex_lock process_table_lock error");
 
     table *assigned_table = tables[state->table_id];
     reset_table(assigned_table);
 
     // for ex4, we can only match a group with a table where both their sizes are the same
-    if (queue_group_counts[assigned_table->size - 1] > 0)
-    {
-        group *waiting_group = get_first_group(queue, assigned_table->size);
+    group *waiting_group = get_first_group(queue, assigned_table->size);
 
-        if (waiting_group)
-        {
-            assigned_table->reserved_queue_num = waiting_group->queue_num;
-            dequeue(queue, waiting_group->queue_num);
-            // // needs to decrement count early as to handle the case where
-            // // the next leave_table is called immediately and we would call cond_signal
-            // // multiple times more than necessary
-            // queue_group_counts[assigned_table->size - 1]--;
-            // signals request_for_table to process waiting groups
-            pthread_cond_broadcast(&process_table_cond);
-        }
+    if (waiting_group)
+    {
+        assigned_table->reserved_queue_num = waiting_group->queue_num;
+        dequeue(queue, waiting_group->queue_num);
+        // signals request_for_table to process waiting groups
+        check_syscall(pthread_cond_broadcast(&process_table_cond), "leave_table: pthread_cond_broadcast process_table_cond error");
     }
 
-    pthread_mutex_unlock(&process_table_lock);
+    check_syscall(pthread_mutex_unlock(&process_table_lock), "leave_table: pthread_mutex_unlock process_table_lock error");
 }
