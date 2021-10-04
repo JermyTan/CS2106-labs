@@ -149,20 +149,21 @@ static void serve_table(table *existing_table, int queue_num)
     free_table_counts[existing_table->size - 1]--;
 }
 
-static table *assign_table(group *waiting_group)
+static table *assign_table(group *waiting_group, int queue_num)
 {
     table *assigned_table;
 
     for (int i = 0; i < total_num_tables; i++)
     {
-        if ((tables[i]->size == waiting_group->num_people && tables[i]->reserved_queue_num == NOT_RESERVED) ||
-            (tables[i]->reserved_queue_num == waiting_group->queue_num))
+        if (tables[i]->size == waiting_group->num_people && tables[i]->reserved_queue_num == queue_num)
         {
             assigned_table = tables[i];
             serve_table(assigned_table, waiting_group->queue_num);
             break;
         }
     }
+
+    return assigned_table;
 }
 
 void restaurant_init(int num_tables[5])
@@ -246,10 +247,13 @@ int request_for_table(group_state *state, int num_people)
             }
         }
 
+        assigned_table = assign_table(new_group, new_group->queue_num);
         queue_group_counts[num_people - 1]--;
     }
-
-    assigned_table = assign_table(new_group);
+    else
+    {
+        assigned_table = assign_table(new_group, NOT_RESERVED);
+    }
 
     pthread_mutex_unlock(&process_table_lock);
 
