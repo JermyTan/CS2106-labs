@@ -6,5 +6,7 @@ LDFLAGS=-pthread
 
 all: ex4
 ex4: ex4.o restaurant.o
+ex4.o: ex4.c restaurant.h
+restaurant.o: restaurant.c restaurant.h
 clean:
 	rm ex4.o restaurant.o ex4

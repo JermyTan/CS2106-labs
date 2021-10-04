@@ -43,7 +43,6 @@ void packer_destroy(void)
 
 int pack_ball(int colour, int id)
 {
-    int other_id;
     colour--;
 
     check_syscall(sem_wait(&color_locks[colour]), "pack_ball: sem_wait color_locks error");
@@ -61,6 +60,8 @@ int pack_ball(int colour, int id)
     }
 
     check_syscall(sem_wait(&group_color_ball_locks[colour]), "pack_ball: sem_wait group_color_ball_locks error");
+
+    int other_id;
 
     for (int i = 0; i < GROUP_SIZE; i++)
     {

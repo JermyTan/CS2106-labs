@@ -2,10 +2,11 @@
 #define RESTAURANT_H
 
 // You may add fields to this struct, but do not modify the name of this struct:
-typedef struct {
-    // TODO: Add your fields here
+typedef struct
+{
+    int num_people;
+    int table_id;
 } group_state;
-
 
 // DO NOT MODIFY THE FUNCTION DECLARATIONS BELOW THIS LINE
 
