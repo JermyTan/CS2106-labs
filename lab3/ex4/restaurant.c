@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <semaphore.h>
 
 #define NUM_TABLE_SIZES 5
 #define NOT_RESERVED -1
