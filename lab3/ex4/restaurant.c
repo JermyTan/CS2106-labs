@@ -5,6 +5,7 @@
 
 #define NUM_TABLE_SIZES 5
 #define NOT_RESERVED -1
+#define NOT_ASSIGNED -1
 
 // You can declare global variables here
 typedef struct
@@ -121,8 +122,6 @@ group *get_first_group(list *queue, int num_people)
 static int total_num_tables;
 static table **tables;
 static list *queue;
-static int queue_group_counts[NUM_TABLE_SIZES];
-static int free_table_counts[NUM_TABLE_SIZES];
 static pthread_mutex_t process_table_lock;
 static pthread_cond_t process_table_cond;
 static int next_queue_num;
@@ -136,30 +135,18 @@ static int check_syscall(int value, const char *error_msg)
     return value;
 }
 
-static void reset_table(table *existing_table)
-{
-    existing_table->reserved_queue_num = NOT_RESERVED;
-    free_table_counts[existing_table->size - 1]++;
-}
-
-static void serve_table(table *existing_table, int queue_num)
-{
-    existing_table->reserved_queue_num = queue_num;
-    free_table_counts[existing_table->size - 1]--;
-}
-
 static int assign_table(group *waiting_group, int queue_num)
 {
     for (int i = 0; i < total_num_tables; i++)
     {
         if (tables[i]->size == waiting_group->num_people && tables[i]->reserved_queue_num == queue_num)
         {
-            serve_table(tables[i], waiting_group->queue_num);
+            tables[i]->reserved_queue_num = waiting_group->queue_num;
             return tables[i]->id;
         }
     }
 
-    return -1;
+    return NOT_ASSIGNED;
 }
 
 void restaurant_init(int num_tables[5])
@@ -174,7 +161,6 @@ void restaurant_init(int num_tables[5])
     total_num_tables = 0;
     for (int i = 0; i < NUM_TABLE_SIZES; i++)
     {
-        queue_group_counts[i] = 0;
         total_num_tables += num_tables[i];
     }
 
@@ -226,22 +212,18 @@ int request_for_table(group_state *state, int num_people)
 
     on_enqueue();
 
-    if (free_table_counts[num_people - 1] == 0 || queue_group_counts[num_people - 1] > 0)
+    state->table_id = assign_table(new_group, NOT_RESERVED);
+
+    if (state->table_id == NOT_ASSIGNED)
     {
         enqueue(queue, new_group);
-        queue_group_counts[num_people - 1]++;
 
-        while (free_table_counts[num_people - 1] == 0 || get_group(queue, new_group->queue_num))
+        while (get_group(queue, new_group->queue_num))
         {
             check_syscall(pthread_cond_wait(&process_table_cond, &process_table_lock), "request_for_table: pthread_cond_wait (process_table_cond, process_table_lock) error");
         }
 
-        queue_group_counts[num_people - 1]--;
         state->table_id = assign_table(new_group, new_group->queue_num);
-    }
-    else
-    {
-        state->table_id = assign_table(new_group, NOT_RESERVED);
     }
 
     check_syscall(pthread_mutex_unlock(&process_table_lock), "request_for_table: pthread_mutex_unlock process_table_lock error");
@@ -256,7 +238,7 @@ void leave_table(group_state *state)
     check_syscall(pthread_mutex_lock(&process_table_lock), "leave_table: pthread_mutex_lock process_table_lock error");
 
     table *assigned_table = tables[state->table_id];
-    reset_table(assigned_table);
+    assigned_table->reserved_queue_num = NOT_RESERVED;
 
     // for ex4, we can only match a group with a table where both their sizes are the same
     group *waiting_group = get_first_group(queue, assigned_table->size);
