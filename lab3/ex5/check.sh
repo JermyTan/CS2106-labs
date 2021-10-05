@@ -9,3 +9,5 @@ then
     valgrind --fair-sched=yes ./ex5 < load_test.in
     valgrind --fair-sched=yes ./ex5 < ../ex4/par_test.in
 fi
+
+make clean

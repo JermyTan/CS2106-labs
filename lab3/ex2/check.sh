@@ -12,3 +12,5 @@ then
     valgrind --fair-sched=yes ./ex2 < ../ex1/par_test.in
     valgrind --fair-sched=yes ./ex2 < ../ex1/tiny_test.in
 fi
+
+make clean
