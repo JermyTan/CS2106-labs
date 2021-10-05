@@ -103,13 +103,13 @@ group *get_group(list *queue, int queue_num)
     return current_group;
 }
 
-group *get_first_group(list *queue, int num_people)
+group *get_first_group(list *queue, int table_size)
 {
     group *current_group = queue->head;
 
     while (current_group)
     {
-        if (current_group->num_people == num_people)
+        if (current_group->num_people <= table_size)
         {
             break;
         }
@@ -139,7 +139,7 @@ static int assign_table(group *waiting_group, int queue_num)
 {
     for (int i = 0; i < total_num_tables; i++)
     {
-        if (tables[i]->size == waiting_group->num_people && tables[i]->reserved_queue_num == queue_num)
+        if (tables[i]->size >= waiting_group->num_people && tables[i]->reserved_queue_num == queue_num)
         {
             tables[i]->reserved_queue_num = waiting_group->queue_num;
             return tables[i]->id;
@@ -175,7 +175,7 @@ void restaurant_init(int num_tables[5])
 
             new_table->id = table_id;
             new_table->size = i + 1;
-            reset_table(new_table);
+            new_table->reserved_queue_num = NOT_RESERVED;
 
             tables[table_id++] = new_table;
         }
@@ -240,7 +240,7 @@ void leave_table(group_state *state)
     table *assigned_table = tables[state->table_id];
     assigned_table->reserved_queue_num = NOT_RESERVED;
 
-    // for ex4, we can only match a group with a table where both their sizes are the same
+    // for ex5, we can match a group with a table where group size <= table size
     group *waiting_group = get_first_group(queue, assigned_table->size);
 
     if (waiting_group)

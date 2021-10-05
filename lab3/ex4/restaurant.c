@@ -103,13 +103,13 @@ group *get_group(list *queue, int queue_num)
     return current_group;
 }
 
-group *get_first_group(list *queue, int num_people)
+group *get_first_group(list *queue, int table_size)
 {
     group *current_group = queue->head;
 
     while (current_group)
     {
-        if (current_group->num_people == num_people)
+        if (current_group->num_people == table_size)
         {
             break;
         }
@@ -175,7 +175,7 @@ void restaurant_init(int num_tables[5])
 
             new_table->id = table_id;
             new_table->size = i + 1;
-            reset_table(new_table);
+            new_table->reserved_queue_num = NOT_RESERVED;
 
             tables[table_id++] = new_table;
         }
