@@ -4,7 +4,6 @@
 #include <pthread.h>
 
 #define NUM_TABLE_SIZES 5
-#define NOT_RESERVED -1
 #define NOT_ASSIGNED -1
 
 // You can declare global variables here
@@ -12,7 +11,7 @@ typedef struct
 {
     int id;
     int size;
-    int reserved_queue_num;
+    int assigned_queue_num;
 } table;
 
 typedef struct GROUP
@@ -139,11 +138,13 @@ static int assign_table(group *waiting_group, int queue_num)
 {
     for (int i = 0; i < total_num_tables; i++)
     {
-        if (tables[i]->size >= waiting_group->num_people && tables[i]->reserved_queue_num == queue_num)
+        if (tables[i]->size < waiting_group->num_people || tables[i]->assigned_queue_num != queue_num)
         {
-            tables[i]->reserved_queue_num = waiting_group->queue_num;
-            return tables[i]->id;
+            continue;
         }
+
+        tables[i]->assigned_queue_num = waiting_group->queue_num;
+        return tables[i]->id;
     }
 
     return NOT_ASSIGNED;
@@ -175,7 +176,7 @@ void restaurant_init(int num_tables[5])
 
             new_table->id = table_id;
             new_table->size = i + 1;
-            new_table->reserved_queue_num = NOT_RESERVED;
+            new_table->assigned_queue_num = NOT_ASSIGNED;
 
             tables[table_id++] = new_table;
         }
@@ -212,7 +213,7 @@ int request_for_table(group_state *state, int num_people)
 
     on_enqueue();
 
-    state->table_id = assign_table(new_group, NOT_RESERVED);
+    state->table_id = assign_table(new_group, NOT_ASSIGNED);
 
     if (state->table_id == NOT_ASSIGNED)
     {
@@ -238,14 +239,14 @@ void leave_table(group_state *state)
     check_syscall(pthread_mutex_lock(&process_table_lock), "leave_table: pthread_mutex_lock process_table_lock error");
 
     table *assigned_table = tables[state->table_id];
-    assigned_table->reserved_queue_num = NOT_RESERVED;
+    assigned_table->assigned_queue_num = NOT_ASSIGNED;
 
     // for ex5, we can match a group with a table where group size <= table size
     group *waiting_group = get_first_group(queue, assigned_table->size);
 
     if (waiting_group)
     {
-        assigned_table->reserved_queue_num = waiting_group->queue_num;
+        assigned_table->assigned_queue_num = waiting_group->queue_num;
         dequeue(queue, waiting_group->queue_num);
         // signals request_for_table to process waiting groups
         check_syscall(pthread_cond_broadcast(&process_table_cond), "leave_table: pthread_cond_broadcast process_table_cond error");

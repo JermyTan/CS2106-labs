@@ -5,6 +5,8 @@
 typedef struct
 {
     int table_id;
+    int queue_num;
+    int num_people;
 } group_state;
 
 // DO NOT MODIFY THE FUNCTION DECLARATIONS BELOW THIS LINE
