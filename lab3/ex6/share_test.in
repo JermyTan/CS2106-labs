@@ -19,7 +19,7 @@ Enter 612 1
 Enter 613 1
 .
 Leave 611
-Leave 602
+Leave 604
 Leave 609
 .
 Enter 614 1
@@ -39,15 +39,25 @@ Leave 601
 .
 Enter 618 2
 .
-Leave 604
+Leave 602
 Leave 607
 .
+Enter 619 1
+Enter 620 1
+Enter 621 2
+Enter 622 1
+.
+Leave 615
+.
+Leave 619
+Leave 620
+Leave 621
 Leave 603
 Leave 608
 Leave 610
 Leave 617
 Leave 605
 Leave 616
-Leave 615
 Leave 606
 Leave 618
+Leave 622

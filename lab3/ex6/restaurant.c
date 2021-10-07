@@ -190,7 +190,7 @@ static int assign_table(group *waiting_group, int queue_num)
                 continue;
             }
 
-            for (int j; j < NUM_TABLE_SIZES; j++)
+            for (int j = 0; j < NUM_TABLE_SIZES; j++)
             {
                 if (tables[i]->assigned_queue_nums[j] == queue_num)
                 {
