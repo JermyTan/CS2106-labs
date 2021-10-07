@@ -11,8 +11,7 @@ typedef struct
 {
     int id;
     int size;
-    int num_free_seats;
-    int assigned_queue_nums[NUM_TABLE_SIZES];
+    int assigned_queue_num;
 } table;
 
 typedef struct GROUP
@@ -103,13 +102,13 @@ group *get_group(list *queue, int queue_num)
     return current_group;
 }
 
-group *get_first_group(list *queue, int num_free_seats)
+group *get_first_group(list *queue, int table_size)
 {
     group *current_group = queue->head;
 
     while (current_group)
     {
-        if (current_group->num_people <= num_free_seats)
+        if (current_group->num_people == table_size)
         {
             break;
         }
@@ -135,69 +134,17 @@ static int check_syscall(int value, const char *error_msg)
     return value;
 }
 
-static void update_table_assigned_queue_num(table *existing_table, int old_queue_num, int new_queue_num)
-{
-    for (int i = 0; i < NUM_TABLE_SIZES; i++)
-    {
-        if (existing_table->assigned_queue_nums[i] == old_queue_num)
-        {
-            existing_table->assigned_queue_nums[i] = new_queue_num;
-            break;
-        }
-    }
-}
-
 static int assign_table(group *waiting_group, int queue_num)
 {
-    if (queue_num == NOT_ASSIGNED)
+    for (int i = 0; i < total_num_tables; i++)
     {
-        int minimum_free_seats = NUM_TABLE_SIZES + 1;
-        table *assigned_table = NULL;
-
-        // try to assign totally empty and unassigned tables first
-        // then try assign partially empty tables if possible.
-        for (int i = 0; i < total_num_tables; i++)
+        if (tables[i]->size != waiting_group->num_people || tables[i]->assigned_queue_num != queue_num)
         {
-            if (tables[i]->size != tables[i]->num_free_seats || tables[i]->num_free_seats < waiting_group->num_people)
-            {
-                if (waiting_group->num_people <= tables[i]->num_free_seats && tables[i]->num_free_seats < minimum_free_seats)
-                {
-                    minimum_free_seats = tables[i]->num_free_seats;
-                    assigned_table = tables[i];
-                }
-
-                continue;
-            }
-
-            assigned_table = tables[i];
-            break;
+            continue;
         }
 
-        // try to assign tables
-        if (assigned_table)
-        {
-            update_table_assigned_queue_num(assigned_table, NOT_ASSIGNED, waiting_group->queue_num);
-            assigned_table->num_free_seats -= waiting_group->num_people;
-            return assigned_table->id;
-        }
-    }
-    else
-    {
-        for (int i = 0; i < total_num_tables; i++)
-        {
-            if (tables[i]->size < waiting_group->num_people)
-            {
-                continue;
-            }
-
-            for (int j = 0; j < NUM_TABLE_SIZES; j++)
-            {
-                if (tables[i]->assigned_queue_nums[j] == queue_num)
-                {
-                    return tables[i]->id;
-                }
-            }
-        }
+        tables[i]->assigned_queue_num = waiting_group->queue_num;
+        return tables[i]->id;
     }
 
     return NOT_ASSIGNED;
@@ -229,12 +176,7 @@ void restaurant_init(int num_tables[5])
 
             new_table->id = table_id;
             new_table->size = i + 1;
-            new_table->num_free_seats = new_table->size;
-
-            for (int k = 0; k < NUM_TABLE_SIZES; k++)
-            {
-                new_table->assigned_queue_nums[k] = NOT_ASSIGNED;
-            }
+            new_table->assigned_queue_num = NOT_ASSIGNED;
 
             tables[table_id++] = new_table;
         }
@@ -271,8 +213,6 @@ int request_for_table(group_state *state, int num_people)
 
     on_enqueue();
 
-    state->queue_num = new_group->queue_num;
-    state->num_people = new_group->num_people;
     state->table_id = assign_table(new_group, NOT_ASSIGNED);
 
     if (state->table_id == NOT_ASSIGNED)
@@ -299,16 +239,14 @@ void leave_table(group_state *state)
     check_syscall(pthread_mutex_lock(&process_table_lock), "leave_table: pthread_mutex_lock process_table_lock error");
 
     table *assigned_table = tables[state->table_id];
-    assigned_table->num_free_seats += state->num_people;
-    update_table_assigned_queue_num(assigned_table, state->queue_num, NOT_ASSIGNED);
+    assigned_table->assigned_queue_num = NOT_ASSIGNED;
 
-    group *waiting_group;
+    // for ex4, we can only match a group with a table where both their sizes are the same
+    group *waiting_group = get_first_group(queue, assigned_table->size);
 
-    // for ex6, we can match fit as many groups within a table where total group sizes <= table size
-    while (assigned_table->num_free_seats > 0 && (waiting_group = get_first_group(queue, assigned_table->num_free_seats)))
+    if (waiting_group)
     {
-        update_table_assigned_queue_num(assigned_table, NOT_ASSIGNED, waiting_group->queue_num);
-        assigned_table->num_free_seats -= waiting_group->num_people;
+        assigned_table->assigned_queue_num = waiting_group->queue_num;
         dequeue(queue, waiting_group->queue_num);
         // signals request_for_table to process waiting groups
         check_syscall(pthread_cond_broadcast(&process_table_cond), "leave_table: pthread_cond_broadcast process_table_cond error");
