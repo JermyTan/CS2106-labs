@@ -1,6 +1,7 @@
 #include "userswap.h"
 #include <stdio.h>
 #include <stdlib.h>
+// #include <unistd.h>
 #include <signal.h>
 #include <sys/mman.h>
 
@@ -95,6 +96,22 @@ meminfo *get_meminfo(list *queue, void *address)
     return current_memoinfo;
 }
 
+static int is_controlled_mem_region(list *queue, void *address)
+{
+    meminfo *current_memoinfo = queue->head;
+
+    while (current_memoinfo)
+    {
+        if (current_memoinfo->address <= address && address < current_memoinfo->address + current_memoinfo->size)
+        {
+            return 1;
+        }
+        current_memoinfo = current_memoinfo->next;
+    }
+
+    return 0;
+}
+
 static size_t lorm = DEFAULT_LORM;
 static size_t total_allocated_mem_size = 0;
 static list meminfo_queue = {NULL, NULL};
@@ -115,14 +132,25 @@ static size_t round_up_mem_size(size_t size)
 
 static void page_fault_handler(void *address)
 {
-    meminfo *existing_meminfo = get_meminfo(&meminfo_queue, address);
-    mprotect(existing_meminfo->address, existing_meminfo->size, PROT_READ);
+    check_syscall(mprotect(address, PAGE_SIZE, PROT_READ), "page_fault_handler: mprotect error");
+}
+
+static void teardown_sig_handler(int signum)
+{
+    struct sigaction sa;
+    sa.sa_flags = NULL;
+    check_syscall(sigemptyset(&sa.sa_mask), "teardown_sig_handler: sigemptyset error");
+    sa.sa_handler = SIG_DFL;
+
+    check_syscall(sigaction(signum, &sa, NULL), "teardown_sig_handler: sigaction error");
 }
 
 static void sigsegv_handler(int signum, siginfo_t *si, void *unused)
 {
-    if (signum != SIGSEGV)
+    if (signum != SIGSEGV || !is_controlled_mem_region(&meminfo_queue, si->si_addr))
     {
+        teardown_sig_handler(signum);
+        check_syscall(raise(signum), "sigsegv_handler: raise error");
         return;
     }
 
@@ -133,10 +161,10 @@ static void setup_sigsegv_handler()
 {
     struct sigaction sa;
     sa.sa_flags = SA_SIGINFO;
-    check_syscall(sigemptyset(&sa.sa_mask), "setup_page_fault_handler: sigemptyset error");
+    check_syscall(sigemptyset(&sa.sa_mask), "setup_sigsegv_handler: sigemptyset error");
     sa.sa_sigaction = sigsegv_handler;
 
-    check_syscall(sigaction(SIGSEGV, &sa, NULL), "setup_page_fault_handler: sigaction error");
+    check_syscall(sigaction(SIGSEGV, &sa, NULL), "setup_sigsegv_handler: sigaction error");
 }
 
 void userswap_set_size(size_t size)
@@ -149,7 +177,12 @@ void *userswap_alloc(size_t size)
     setup_sigsegv_handler();
 
     size_t rounded_size = round_up_mem_size(size);
-    void *address = check_syscall(mmap(NULL, rounded_size, PROT_NONE, MAP_ANONYMOUS, -1, 0), "userswap_alloc: mmap error");
+    void *address = mmap(NULL, rounded_size, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+
+    if (address == MAP_FAILED)
+    {
+        check_syscall(-1, "userswap_alloc: mmap error");
+    }
 
     meminfo *new_meminfo = (meminfo *)malloc(sizeof(meminfo));
     new_meminfo->address = address;
