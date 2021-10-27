@@ -152,44 +152,6 @@ static size_t round_up_mem_size(size_t size)
     return size % PAGE_SIZE ? (size / PAGE_SIZE + 1) * PAGE_SIZE : size;
 }
 
-static void page_fault_handler(void *address)
-{
-    check_syscall(mprotect(address, PAGE_SIZE, PROT_READ), "page_fault_handler: mprotect error");
-    total_resident_mem_size += PAGE_SIZE;
-}
-
-static void teardown_sig_handler(int signum)
-{
-    struct sigaction sa;
-    sa.sa_flags = 0;
-    check_syscall(sigemptyset(&sa.sa_mask), "teardown_sig_handler: sigemptyset error");
-    sa.sa_handler = SIG_DFL;
-
-    check_syscall(sigaction(signum, &sa, NULL), "teardown_sig_handler: sigaction error");
-}
-
-static void sigsegv_handler(int signum, siginfo_t *si, void *unused)
-{
-    if (signum != SIGSEGV || !is_controlled_mem_region(&meminfo_queue, si->si_addr))
-    {
-        teardown_sig_handler(signum);
-        check_syscall(raise(signum), "sigsegv_handler: raise error");
-        return;
-    }
-
-    page_fault_handler(si->si_addr);
-}
-
-static void setup_sigsegv_handler()
-{
-    struct sigaction sa;
-    sa.sa_flags = SA_SIGINFO;
-    check_syscall(sigemptyset(&sa.sa_mask), "setup_sigsegv_handler: sigemptyset error");
-    sa.sa_sigaction = sigsegv_handler;
-
-    check_syscall(sigaction(SIGSEGV, &sa, NULL), "setup_sigsegv_handler: sigaction error");
-}
-
 static void compute_page_table_level_indices(void *address, int page_table_level_indices[])
 {
     size_t address_value = (size_t)address;
@@ -227,7 +189,61 @@ static page_table *get_page_table(int page_table_level_indices[])
     return table;
 }
 
-static void insert_page(void *address)
+static void page_fault_handler(void *address)
+{
+    int page_table_level_indices[4];
+    compute_page_table_level_indices(address, page_table_level_indices);
+
+    page_table *table = get_page_table(page_table_level_indices);
+
+    page_table_entry *entry = table->entries[page_table_level_indices[LEVEL_ONE]];
+
+    if (!entry->is_resident)
+    {
+        check_syscall(mprotect(address, PAGE_SIZE, PROT_READ), "page_fault_handler: mprotect PROT_READ error");
+        entry->is_resident = 1;
+        total_resident_mem_size += PAGE_SIZE;
+    }
+    else
+    {
+        check_syscall(mprotect(address, PAGE_SIZE, PROT_READ | PROT_WRITE), "page_fault_handler: mprotect PROT_READ | PROT_WRITE error");
+        entry->is_dirty = 1;
+    }
+}
+
+static void teardown_sig_handler(int signum)
+{
+    struct sigaction sa;
+    sa.sa_flags = 0;
+    check_syscall(sigemptyset(&sa.sa_mask), "teardown_sig_handler: sigemptyset error");
+    sa.sa_handler = SIG_DFL;
+
+    check_syscall(sigaction(signum, &sa, NULL), "teardown_sig_handler: sigaction error");
+}
+
+static void sigsegv_handler(int signum, siginfo_t *si, void *unused)
+{
+    if (signum != SIGSEGV || !is_controlled_mem_region(&meminfo_queue, si->si_addr))
+    {
+        teardown_sig_handler(signum);
+        check_syscall(raise(signum), "sigsegv_handler: raise error");
+        return;
+    }
+
+    page_fault_handler(si->si_addr);
+}
+
+static void setup_sigsegv_handler()
+{
+    struct sigaction sa;
+    sa.sa_flags = SA_SIGINFO;
+    check_syscall(sigemptyset(&sa.sa_mask), "setup_sigsegv_handler: sigemptyset error");
+    sa.sa_sigaction = sigsegv_handler;
+
+    check_syscall(sigaction(SIGSEGV, &sa, NULL), "setup_sigsegv_handler: sigaction error");
+}
+
+static void insert_page_table_entry(void *address)
 {
     int page_table_level_indices[4];
     compute_page_table_level_indices(address, page_table_level_indices);
@@ -243,13 +259,38 @@ static void insert_page(void *address)
     table->num_filled_entries += 1;
 }
 
-static void paginate(void *address, size_t size)
+static void clean_up_page_tables(int level, page_table *table, int page_table_level_indices[])
+{
+    int index = page_table_level_indices[level];
+
+    if (level < LEVEL_ONE)
+    {
+        clean_up_page_tables(level + 1, table->entries[index], page_table_level_indices);
+    }
+
+    if (level == LEVEL_ONE || ((page_table *)table->entries[index])->num_filled_entries == 0)
+    {
+        free(table->entries[index]);
+        table->entries[index] = NULL;
+        table->num_filled_entries -= 1;
+    }
+}
+
+static void remove_page_table_entry(void *address)
+{
+    int page_table_level_indices[4];
+    compute_page_table_level_indices(address, page_table_level_indices);
+
+    clean_up_page_tables(LEVEL_FOUR, &page_table_directory, page_table_level_indices);
+}
+
+static void apply_page_action(void *address, size_t size, void (*action)(void *))
 {
     size_t num_pages = size / PAGE_SIZE;
 
     while (num_pages--)
     {
-        insert_page(address);
+        action(address);
         address += PAGE_SIZE;
     }
 }
@@ -281,7 +322,7 @@ void *userswap_alloc(size_t size)
         check_syscall(-1, "userswap_alloc: mmap error");
     }
 
-    paginate(address, size);
+    apply_page_action(address, size, insert_page_table_entry);
 
     store_meminfo(address, size);
 
@@ -293,6 +334,8 @@ void userswap_free(void *mem)
     meminfo *removed_meminfo = dequeue(&meminfo_queue, mem);
 
     check_syscall(munmap(removed_meminfo->address, removed_meminfo->size), "userswap_free: munmap error");
+
+    apply_page_action(removed_meminfo->address, removed_meminfo->size, remove_page_table_entry);
 
     free(removed_meminfo);
 }
