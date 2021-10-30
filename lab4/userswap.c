@@ -15,19 +15,28 @@
 #define LEVEL_THREE 1
 #define LEVEL_FOUR 0
 
-typedef struct MEMINFO
+typedef struct
 {
     void *address;
-    size_t size;
-    struct MEMINFO *next;
-} meminfo;
+} node_data;
+
+typedef struct NODE
+{
+    void *data;
+    struct NODE *next;
+} node;
 
 typedef struct
 {
-    meminfo *head;
-    meminfo *tail;
+    node *head;
+    node *tail;
 } list;
 
+typedef struct MEM_REGION
+{
+    void *address;
+    size_t size;
+} mem_region;
 typedef struct
 {
     void *address;
@@ -41,31 +50,35 @@ typedef struct
     void *entries[NUM_PAGE_TABLE_ENTRIES];
 } page_table;
 
-static void enqueue(list *queue, meminfo *new_meminfo)
+static void enqueue(list *queue, void *data)
 {
+    node *new_node = (node *)malloc(sizeof(node));
+    new_node->data = data;
+    new_node->next = NULL;
+
     if (!queue->head)
     {
-        queue->head = new_meminfo;
-        queue->tail = new_meminfo;
+        queue->head = new_node;
+        queue->tail = new_node;
         return;
     }
 
-    queue->tail->next = new_meminfo;
-    queue->tail = new_meminfo;
+    queue->tail->next = new_node;
+    queue->tail = new_node;
 }
 
-static meminfo *dequeue(list *queue, void *address)
+static void *dequeue(list *queue, void *address)
 {
     if (!queue->head)
     {
         return NULL;
     }
 
-    meminfo *removed_meminfo = NULL;
+    node *removed_node = NULL;
 
-    if (queue->head->address == address)
+    if (!address || ((node_data *)queue->head->data)->address == address)
     {
-        removed_meminfo = queue->head;
+        removed_node = queue->head;
 
         if (queue->head == queue->tail)
         {
@@ -79,54 +92,45 @@ static meminfo *dequeue(list *queue, void *address)
     }
     else
     {
-        meminfo *previous_meminfo = queue->head;
-        meminfo *current_memoinfo = previous_meminfo->next;
+        node *previous_node = queue->head;
+        node *current_node = previous_node->next;
 
-        while (current_memoinfo)
+        while (current_node)
         {
-            if (current_memoinfo->address == address)
+            if (((node_data *)current_node->data)->address == address)
             {
-                removed_meminfo = current_memoinfo;
-                previous_meminfo->next = current_memoinfo->next;
+                removed_node = current_node;
+                previous_node->next = current_node->next;
                 break;
             }
 
-            previous_meminfo = current_memoinfo;
-            current_memoinfo = current_memoinfo->next;
+            previous_node = current_node;
+            current_node = current_node->next;
         }
     }
 
-    removed_meminfo->next = NULL;
-    return removed_meminfo;
-}
-
-meminfo *get_meminfo(list *queue, void *address)
-{
-    meminfo *current_memoinfo = queue->head;
-
-    while (current_memoinfo)
+    if (!removed_node)
     {
-        if (current_memoinfo->address == address)
-        {
-            break;
-        }
-        current_memoinfo = current_memoinfo->next;
+        return NULL;
     }
 
-    return current_memoinfo;
+    void *data = removed_node->data;
+    free(removed_node);
+
+    return data;
 }
 
 static int is_controlled_mem_region(list *queue, void *address)
 {
-    meminfo *current_memoinfo = queue->head;
+    node *current_node = queue->head;
 
-    while (current_memoinfo)
+    while (current_node)
     {
-        if (current_memoinfo->address <= address && address < current_memoinfo->address + current_memoinfo->size)
+        if (((mem_region *)current_node->data)->address <= address && address < ((mem_region *)current_node->data)->address + ((mem_region *)current_node->data)->size)
         {
             return 1;
         }
-        current_memoinfo = current_memoinfo->next;
+        current_node = current_node->next;
     }
 
     return 0;
@@ -135,7 +139,8 @@ static int is_controlled_mem_region(list *queue, void *address)
 static const int LEVELS[] = {LEVEL_ONE, LEVEL_TWO, LEVEL_THREE, LEVEL_FOUR};
 static size_t lorm = DEFAULT_LORM;
 static size_t total_resident_mem_size = 0;
-static list meminfo_queue = {NULL, NULL};
+static list mem_region_queue = {NULL, NULL};
+static list page_table_entry_queue = {NULL, NULL};
 static page_table page_table_directory = {0, {NULL}};
 
 static int check_syscall(int value, const char *error_msg)
@@ -170,7 +175,7 @@ static page_table *get_page_table(int page_table_level_indices[])
 
     for (int i = 0; i < 3; i++)
     {
-        if (table->entries[page_table_level_indices[i]] == NULL)
+        if (!table->entries[page_table_level_indices[i]])
         {
             page_table *new_table = (page_table *)malloc(sizeof(page_table));
             new_table->num_filled_entries = 0;
@@ -189,6 +194,22 @@ static page_table *get_page_table(int page_table_level_indices[])
     return table;
 }
 
+static void evict_page(void *address)
+{
+    page_table_entry *evicted_entry = (page_table_entry *)dequeue(&page_table_entry_queue, address);
+
+    if (!evicted_entry)
+    {
+        return;
+    }
+
+    check_syscall(mprotect(evicted_entry->address, PAGE_SIZE, PROT_NONE), "evict_page: mprotect PROT_NONE error");
+
+    evicted_entry->is_resident = 0;
+    evicted_entry->is_dirty = 0;
+    total_resident_mem_size -= PAGE_SIZE;
+}
+
 static void page_fault_handler(void *address)
 {
     int page_table_level_indices[4];
@@ -200,7 +221,15 @@ static void page_fault_handler(void *address)
 
     if (!entry->is_resident)
     {
+        while (total_resident_mem_size >= lorm)
+        {
+            evict_page(NULL);
+        }
+
         check_syscall(mprotect(address, PAGE_SIZE, PROT_READ), "page_fault_handler: mprotect PROT_READ error");
+
+        enqueue(&page_table_entry_queue, entry);
+
         entry->is_resident = 1;
         total_resident_mem_size += PAGE_SIZE;
     }
@@ -223,7 +252,7 @@ static void teardown_sig_handler(int signum)
 
 static void sigsegv_handler(int signum, siginfo_t *si, void *unused)
 {
-    if (signum != SIGSEGV || !is_controlled_mem_region(&meminfo_queue, si->si_addr))
+    if (signum != SIGSEGV || !is_controlled_mem_region(&mem_region_queue, si->si_addr))
     {
         teardown_sig_handler(signum);
         check_syscall(raise(signum), "sigsegv_handler: raise error");
@@ -233,7 +262,7 @@ static void sigsegv_handler(int signum, siginfo_t *si, void *unused)
     page_fault_handler(si->si_addr);
 }
 
-static void setup_sigsegv_handler()
+static void setup_sigsegv_handler(void)
 {
     struct sigaction sa;
     sa.sa_flags = SA_SIGINFO;
@@ -295,19 +324,23 @@ static void apply_page_action(void *address, size_t size, void (*action)(void *)
     }
 }
 
-static void store_meminfo(void *address, size_t size)
+static void store_mem_region(void *address, size_t size)
 {
-    meminfo *new_meminfo = (meminfo *)malloc(sizeof(meminfo));
-    new_meminfo->address = address;
-    new_meminfo->size = size;
-    new_meminfo->next = NULL;
+    mem_region *new_mem_region = (mem_region *)malloc(sizeof(mem_region));
+    new_mem_region->address = address;
+    new_mem_region->size = size;
 
-    enqueue(&meminfo_queue, new_meminfo);
+    enqueue(&mem_region_queue, new_mem_region);
 }
 
 void userswap_set_size(size_t size)
 {
     lorm = size;
+
+    while (total_resident_mem_size > lorm)
+    {
+        evict_page(NULL);
+    }
 }
 
 void *userswap_alloc(size_t size)
@@ -324,20 +357,22 @@ void *userswap_alloc(size_t size)
 
     apply_page_action(address, size, insert_page_table_entry);
 
-    store_meminfo(address, size);
+    store_mem_region(address, size);
 
     return address;
 }
 
 void userswap_free(void *mem)
 {
-    meminfo *removed_meminfo = dequeue(&meminfo_queue, mem);
+    mem_region *removed_mem_region = (mem_region *)dequeue(&mem_region_queue, mem);
 
-    check_syscall(munmap(removed_meminfo->address, removed_meminfo->size), "userswap_free: munmap error");
+    apply_page_action(removed_mem_region->address, removed_mem_region->size, evict_page);
 
-    apply_page_action(removed_meminfo->address, removed_meminfo->size, remove_page_table_entry);
+    check_syscall(munmap(removed_mem_region->address, removed_mem_region->size), "userswap_free: munmap error");
 
-    free(removed_meminfo);
+    apply_page_action(removed_mem_region->address, removed_mem_region->size, remove_page_table_entry);
+
+    free(removed_mem_region);
 }
 
 void *userswap_map(int fd, size_t size)
