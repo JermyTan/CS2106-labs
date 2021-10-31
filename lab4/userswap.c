@@ -1,8 +1,12 @@
 #include "userswap.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
 
 #define PAGE_SIZE 4096
 #define NUM_PAGE_TABLE_ENTRIES 512
@@ -14,6 +18,7 @@
 #define LEVEL_TWO 2
 #define LEVEL_THREE 1
 #define LEVEL_FOUR 0
+#define NOT_ASSIGNED -1
 
 typedef struct
 {
@@ -42,6 +47,7 @@ typedef struct
     void *address;
     int is_resident;
     int is_dirty;
+    off_t swap_file_location;
 } page_table_entry;
 
 typedef struct
@@ -141,7 +147,10 @@ static size_t lorm = DEFAULT_LORM;
 static size_t total_resident_mem_size = 0;
 static list mem_region_queue = {NULL, NULL};
 static list page_table_entry_queue = {NULL, NULL};
+static list available_swap_file_location_queue = {NULL, NULL};
 static page_table page_table_directory = {0, {NULL}};
+static int swap_file_fd = NOT_ASSIGNED;
+static size_t swap_file_size = 0;
 
 static int check_syscall(int value, const char *error_msg)
 {
@@ -185,13 +194,72 @@ static page_table *get_page_table(int page_table_level_indices[])
             }
 
             table->entries[page_table_level_indices[i]] = new_table;
-            table->num_filled_entries += 1;
+            table->num_filled_entries++;
         }
 
         table = table->entries[page_table_level_indices[i]];
     }
 
     return table;
+}
+
+static void swap_to_file(page_table_entry *entry)
+{
+    if (swap_file_fd == NOT_ASSIGNED)
+    {
+        char swap_file_name[20];
+        check_syscall(sprintf(swap_file_name, "%d.swap", getpid()), "swap_to_file: sprintf error");
+
+        swap_file_fd = check_syscall(open(swap_file_name, O_RDWR | O_CREAT | O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO), "swap_to_file: open error");
+    }
+
+    if (entry->swap_file_location == NOT_ASSIGNED)
+    {
+        off_t *swap_file_location_ptr = (off_t *)dequeue(&available_swap_file_location_queue, NULL);
+
+        if (swap_file_location_ptr)
+        {
+            entry->swap_file_location = *swap_file_location_ptr;
+            free(swap_file_location_ptr);
+        }
+        else
+        {
+            entry->swap_file_location = swap_file_size;
+            swap_file_size += PAGE_SIZE;
+        }
+    }
+
+    check_syscall(pwrite(swap_file_fd, entry->address, PAGE_SIZE, entry->swap_file_location), "swap_to_file: pwrite error");
+}
+
+static void swap_from_file(page_table_entry *entry)
+{
+    check_syscall(mprotect(entry->address, PAGE_SIZE, PROT_WRITE), "swap_from_file: mprotect PROT_WRITE error");
+    check_syscall(pread(swap_file_fd, entry->address, PAGE_SIZE, entry->swap_file_location), "swap_from_file: pread error");
+}
+
+static void free_swap_file_location(void *address)
+{
+    int page_table_level_indices[4];
+    compute_page_table_level_indices(address, page_table_level_indices);
+
+    page_table *table = get_page_table(page_table_level_indices);
+
+    page_table_entry *entry = table->entries[page_table_level_indices[LEVEL_ONE]];
+
+    entry->is_dirty = 0;
+
+    if (entry->swap_file_location == NOT_ASSIGNED)
+    {
+        return;
+    }
+
+    off_t *swap_file_location_ptr = (off_t *)malloc(sizeof(off_t));
+    *swap_file_location_ptr = entry->swap_file_location;
+
+    enqueue(&available_swap_file_location_queue, swap_file_location_ptr);
+
+    entry->swap_file_location = NOT_ASSIGNED;
 }
 
 static void evict_page(void *address)
@@ -203,6 +271,12 @@ static void evict_page(void *address)
         return;
     }
 
+    if (evicted_entry->is_dirty)
+    {
+        swap_to_file(evicted_entry);
+    }
+
+    check_syscall(madvise(evicted_entry->address, PAGE_SIZE, MADV_DONTNEED), "evict_page: madvise MADV_DONTNEED error");
     check_syscall(mprotect(evicted_entry->address, PAGE_SIZE, PROT_NONE), "evict_page: mprotect PROT_NONE error");
 
     evicted_entry->is_resident = 0;
@@ -226,7 +300,12 @@ static void page_fault_handler(void *address)
             evict_page(NULL);
         }
 
-        check_syscall(mprotect(address, PAGE_SIZE, PROT_READ), "page_fault_handler: mprotect PROT_READ error");
+        if (entry->swap_file_location != NOT_ASSIGNED)
+        {
+            swap_from_file(entry);
+        }
+
+        check_syscall(mprotect(entry->address, PAGE_SIZE, PROT_READ), "page_fault_handler: mprotect PROT_READ error");
 
         enqueue(&page_table_entry_queue, entry);
 
@@ -235,7 +314,7 @@ static void page_fault_handler(void *address)
     }
     else
     {
-        check_syscall(mprotect(address, PAGE_SIZE, PROT_READ | PROT_WRITE), "page_fault_handler: mprotect PROT_READ | PROT_WRITE error");
+        check_syscall(mprotect(entry->address, PAGE_SIZE, PROT_READ | PROT_WRITE), "page_fault_handler: mprotect PROT_READ | PROT_WRITE error");
         entry->is_dirty = 1;
     }
 }
@@ -283,9 +362,10 @@ static void insert_page_table_entry(void *address)
     new_entry->address = address;
     new_entry->is_resident = 0;
     new_entry->is_dirty = 0;
+    new_entry->swap_file_location = NOT_ASSIGNED;
 
     table->entries[page_table_level_indices[LEVEL_ONE]] = new_entry;
-    table->num_filled_entries += 1;
+    table->num_filled_entries++;
 }
 
 static void clean_up_page_tables(int level, page_table *table, int page_table_level_indices[])
@@ -301,7 +381,7 @@ static void clean_up_page_tables(int level, page_table *table, int page_table_le
     {
         free(table->entries[index]);
         table->entries[index] = NULL;
-        table->num_filled_entries -= 1;
+        table->num_filled_entries--;
     }
 }
 
@@ -333,9 +413,49 @@ static void store_mem_region(void *address, size_t size)
     enqueue(&mem_region_queue, new_mem_region);
 }
 
+static void display_library_statistics(void)
+{
+    printf("LORM: %zu\n", lorm);
+
+    printf("Total resident mem: %zu\n", total_resident_mem_size);
+
+    size_t num_mem_regions = 0;
+    node *current_node = mem_region_queue.head;
+    while (current_node)
+    {
+        num_mem_regions++;
+        current_node = current_node->next;
+    }
+    printf("Num controlled mem regions: %zu\n", num_mem_regions);
+
+    size_t num_page_table_entries = 0;
+    current_node = page_table_entry_queue.head;
+    while (current_node)
+    {
+        num_page_table_entries++;
+        current_node = current_node->next;
+    }
+    printf("Num page table entries: %zu\n", num_page_table_entries);
+
+    size_t num_available_swap_file_locations = 0;
+    current_node = available_swap_file_location_queue.head;
+    while (current_node)
+    {
+        num_available_swap_file_locations++;
+        current_node = current_node->next;
+    }
+    printf("Num available swap file locations: %zu\n", num_available_swap_file_locations);
+
+    printf("Page table directory size: %d\n", page_table_directory.num_filled_entries);
+
+    printf("Swap file fd: %d\n", swap_file_fd);
+
+    printf("Swap file size: %zu\n", swap_file_size);
+}
+
 void userswap_set_size(size_t size)
 {
-    lorm = size;
+    lorm = round_up_mem_size(size);
 
     while (total_resident_mem_size > lorm)
     {
@@ -348,11 +468,11 @@ void *userswap_alloc(size_t size)
     setup_sigsegv_handler();
 
     size = round_up_mem_size(size);
-    void *address = mmap(NULL, size, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    void *address = mmap(NULL, size, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, NOT_ASSIGNED, 0);
 
     if (address == MAP_FAILED)
     {
-        check_syscall(-1, "userswap_alloc: mmap error");
+        check_syscall(NOT_ASSIGNED, "userswap_alloc: mmap error");
     }
 
     apply_page_action(address, size, insert_page_table_entry);
@@ -366,13 +486,27 @@ void userswap_free(void *mem)
 {
     mem_region *removed_mem_region = (mem_region *)dequeue(&mem_region_queue, mem);
 
-    apply_page_action(removed_mem_region->address, removed_mem_region->size, evict_page);
+    apply_page_action(removed_mem_region->address, removed_mem_region->size, free_swap_file_location);
 
-    check_syscall(munmap(removed_mem_region->address, removed_mem_region->size), "userswap_free: munmap error");
+    apply_page_action(removed_mem_region->address, removed_mem_region->size, evict_page);
 
     apply_page_action(removed_mem_region->address, removed_mem_region->size, remove_page_table_entry);
 
+    check_syscall(munmap(removed_mem_region->address, removed_mem_region->size), "userswap_free: munmap error");
+
     free(removed_mem_region);
+
+    // not sure if required to free malloc mem when program terminates
+    if (!mem_region_queue.head)
+    {
+        while (available_swap_file_location_queue.head)
+        {
+            free(dequeue(&available_swap_file_location_queue, NULL));
+            swap_file_size -= PAGE_SIZE;
+        }
+    }
+
+    display_library_statistics();
 }
 
 void *userswap_map(int fd, size_t size)
