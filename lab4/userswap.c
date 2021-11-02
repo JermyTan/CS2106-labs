@@ -58,6 +58,12 @@ typedef struct
     void *entries[NUM_PAGE_TABLE_ENTRIES];
 } page_table;
 
+typedef struct
+{
+    size_t offset;
+    void *context;
+} page_action_context;
+
 static void enqueue(list *queue, void *data)
 {
     node *new_node = (node *)malloc(sizeof(node));
@@ -166,10 +172,11 @@ static page_table *get_page_table(int page_table_level_indices[]);
 static void evict_page(void *address);
 static void swap_from_file(page_table_entry *entry);
 static void swap_to_file(page_table_entry *entry);
-static void apply_page_action(void *address, size_t size, void *(*action)(void *));
+static void apply_page_action(void *address, size_t size, void *(*action)(void *address, page_action_context *action_context), void *context);
 static void store_mem_region(void *address, size_t size);
-static page_table_entry *insert_page_table_entry(void *address);
-static void *clean_up_page(void *address);
+static page_table_entry *insert_default_page_table_entry(void *address, page_action_context *action_context);
+static page_table_entry *insert_mapped_file_page_table_entry(void *address, page_action_context *action_context);
+static void *clean_up_page(void *address, page_action_context *action_context);
 static void free_swap_file_location(page_table_entry *entry);
 static void clean_up_page_tables(int level, page_table *table, int page_table_level_indices[]);
 static void display_library_statistics(void);
@@ -197,17 +204,17 @@ void *userswap_alloc(size_t size)
 {
     setup_sigsegv_handler();
 
-    size = round_up_mem_size(size);
-    void *address = mmap(NULL, size, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, NOT_ASSIGNED, 0);
+    size_t rounded_size = round_up_mem_size(size);
+    void *address = mmap(NULL, rounded_size, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, NOT_ASSIGNED, 0);
 
     if (address == MAP_FAILED)
     {
         check_syscall(NOT_ASSIGNED, "userswap_alloc: mmap error");
     }
 
-    apply_page_action(address, size, (void *(*)(void *))insert_page_table_entry);
+    apply_page_action(address, rounded_size, (void *(*)(void *, page_action_context *))insert_default_page_table_entry, NULL);
 
-    store_mem_region(address, size);
+    store_mem_region(address, rounded_size);
 
     return address;
 }
@@ -216,7 +223,7 @@ void userswap_free(void *mem)
 {
     mem_region *removed_mem_region = (mem_region *)dequeue(&mem_region_queue, mem);
 
-    apply_page_action(removed_mem_region->address, removed_mem_region->size, clean_up_page);
+    apply_page_action(removed_mem_region->address, removed_mem_region->size, clean_up_page, NULL);
 
     check_syscall(munmap(removed_mem_region->address, removed_mem_region->size), "userswap_free: munmap error");
 
@@ -239,7 +246,23 @@ void *userswap_map(int fd, size_t size)
 {
     setup_sigsegv_handler();
 
-    return NULL;
+    size_t rounded_size = round_up_mem_size(size);
+    void *address = mmap(NULL, rounded_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, NOT_ASSIGNED, 0);
+
+    if (address == MAP_FAILED)
+    {
+        check_syscall(NOT_ASSIGNED, "userswap_map: mmap error");
+    }
+
+    check_syscall(pread(fd, address, rounded_size, 0), "userswap_map: pread error");
+    check_syscall(pwrite(fd, address, rounded_size, 0), "userswap_map: pwrite error");
+    check_syscall(mprotect(address, rounded_size, PROT_NONE), "userswap_map: mprotect PROT_NONE error");
+
+    apply_page_action(address, rounded_size, (void *(*)(void *, page_action_context *))insert_mapped_file_page_table_entry, &fd);
+
+    store_mem_region(address, rounded_size);
+
+    return address;
 }
 
 static size_t round_up_mem_size(size_t size)
@@ -420,14 +443,16 @@ static void swap_from_file(page_table_entry *entry)
     check_syscall(pread(entry->secondary_storage_fd, entry->address, PAGE_SIZE, entry->secondary_storage_location), "swap_from_file: pread error");
 }
 
-static void apply_page_action(void *address, size_t size, void *(*action)(void *))
+static void apply_page_action(void *address, size_t size, void *(*action)(void *address, page_action_context *action_context), void *context)
 {
     size_t num_pages = size / PAGE_SIZE;
+    page_action_context action_context = {0, context};
 
     while (num_pages--)
     {
-        action(address);
+        action(address, &action_context);
         address += PAGE_SIZE;
+        action_context.offset += PAGE_SIZE;
     }
 }
 
@@ -440,7 +465,7 @@ static void store_mem_region(void *address, size_t size)
     enqueue(&mem_region_queue, new_mem_region);
 }
 
-static page_table_entry *insert_page_table_entry(void *address)
+static page_table_entry *insert_default_page_table_entry(void *address, page_action_context *unused)
 {
     int page_table_level_indices[4];
     compute_page_table_level_indices(address, page_table_level_indices);
@@ -460,7 +485,17 @@ static page_table_entry *insert_page_table_entry(void *address)
     return new_entry;
 }
 
-static void *clean_up_page(void *address)
+static page_table_entry *insert_mapped_file_page_table_entry(void *address, page_action_context *action_context)
+{
+    page_table_entry *new_entry = insert_default_page_table_entry(address, NULL);
+
+    new_entry->secondary_storage_location = action_context->offset;
+    new_entry->secondary_storage_fd = *(int *)action_context->context;
+
+    return new_entry;
+}
+
+static void *clean_up_page(void *address, page_action_context *unused)
 {
     int page_table_level_indices[4];
     compute_page_table_level_indices(address, page_table_level_indices);

@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
 
   if (use_userswap)
   {
-    userswap_free(file_map);
+    userswap_free((void *)file_map);
   }
   else
   {
@@ -88,6 +88,8 @@ int main(int argc, char *argv[])
       failed = 1;
     }
   }
+
+  free((void *)mem);
 
   return failed;
 }
