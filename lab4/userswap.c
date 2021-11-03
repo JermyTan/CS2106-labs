@@ -189,45 +189,45 @@ static int check_syscall(int value, const char *error_msg)
     return value;
 }
 
-static void display_library_statistics(void)
-{
-    printf("LORM: %zu\n", lorm);
+// static void display_library_statistics(void)
+// {
+//     printf("LORM: %zu\n", lorm);
 
-    printf("Total resident mem: %zu\n", total_resident_mem_size);
+//     printf("Total resident mem: %zu\n", total_resident_mem_size);
 
-    size_t num_mem_regions = 0;
-    node *current_node = mem_region_queue.head;
-    while (current_node)
-    {
-        num_mem_regions++;
-        current_node = current_node->next;
-    }
-    printf("Num controlled mem regions: %zu\n", num_mem_regions);
+//     size_t num_mem_regions = 0;
+//     node *current_node = mem_region_queue.head;
+//     while (current_node)
+//     {
+//         num_mem_regions++;
+//         current_node = current_node->next;
+//     }
+//     printf("Num controlled mem regions: %zu\n", num_mem_regions);
 
-    size_t num_page_table_entries = 0;
-    current_node = page_table_entry_queue.head;
-    while (current_node)
-    {
-        num_page_table_entries++;
-        current_node = current_node->next;
-    }
-    printf("Num page table entries: %zu\n", num_page_table_entries);
+//     size_t num_page_table_entries = 0;
+//     current_node = page_table_entry_queue.head;
+//     while (current_node)
+//     {
+//         num_page_table_entries++;
+//         current_node = current_node->next;
+//     }
+//     printf("Num page table entries: %zu\n", num_page_table_entries);
 
-    size_t num_available_swap_file_locations = 0;
-    current_node = available_swap_file_location_queue.head;
-    while (current_node)
-    {
-        num_available_swap_file_locations++;
-        current_node = current_node->next;
-    }
-    printf("Num available swap file locations: %zu\n", num_available_swap_file_locations);
+//     size_t num_available_swap_file_locations = 0;
+//     current_node = available_swap_file_location_queue.head;
+//     while (current_node)
+//     {
+//         num_available_swap_file_locations++;
+//         current_node = current_node->next;
+//     }
+//     printf("Num available swap file locations: %zu\n", num_available_swap_file_locations);
 
-    printf("Page table directory size: %d\n", page_table_directory.num_filled_entries);
+//     printf("Page table directory size: %d\n", page_table_directory.num_filled_entries);
 
-    printf("Swap file fd: %d\n", swap_file_fd);
+//     printf("Swap file fd: %d\n", swap_file_fd);
 
-    printf("Swap file size: %zu\n", swap_file_size);
-}
+//     printf("Swap file size: %zu\n", swap_file_size);
+// }
 
 void userswap_set_size(size_t size)
 {
