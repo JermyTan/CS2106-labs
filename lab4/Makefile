@@ -1,5 +1,6 @@
 CC := gcc
 CFLAGS := -g -std=c18 -O2 -Wall -Wextra -Werror -Wno-error=unused-parameter
+LDFLAGS=-pthread
 
 all: workload_wraddr workload_readonly workload_rdfile workload_wrfile
 

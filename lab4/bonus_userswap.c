@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #define PAGE_SIZE 4096
 #define NUM_PAGE_TABLE_ENTRIES 512
@@ -160,6 +161,7 @@ static list available_swap_file_location_queue = {NULL, NULL};
 static page_table page_table_directory = {0, {NULL}};
 static int swap_file_fd = NOT_ASSIGNED;
 static size_t swap_file_size = 0;
+static pthread_mutex_t page_state_mutation_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* helper function prototypes */
 static size_t round_up_mem_size(size_t size);
@@ -318,6 +320,8 @@ static void page_fault_handler(void *address)
 
     page_table_entry *entry = table->entries[page_table_level_indices[LEVEL_ONE]];
 
+    check_syscall(pthread_mutex_lock(&page_state_mutation_lock), "page_fault_handler: pthread_mutex_lock page_state_mutation_lock error");
+
     if (!entry->is_resident)
     {
         while (total_resident_mem_size >= lorm)
@@ -342,6 +346,8 @@ static void page_fault_handler(void *address)
         check_syscall(mprotect(entry->address, PAGE_SIZE, PROT_READ | PROT_WRITE), "page_fault_handler: mprotect PROT_READ | PROT_WRITE error");
         entry->is_dirty = true;
     }
+
+    check_syscall(pthread_mutex_unlock(&page_state_mutation_lock), "page_fault_handler: pthread_mutex_unlock page_state_mutation_lock error");
 }
 
 static void compute_page_table_level_indices(void *address, int page_table_level_indices[])
