@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -39,7 +40,7 @@ typedef struct
     node *tail;
 } list;
 
-typedef struct MEM_REGION
+typedef struct
 {
     void *address;
     size_t size;
@@ -270,13 +271,18 @@ void userswap_free(void *mem)
 
     free(removed_mem_region);
 
-    // reset in-memory swap file state when there is no controlled mem regions
+    // reset in-memory swap file state and clean up swap file when there is no controlled mem regions
     if (!mem_region_queue.head)
     {
         while (available_swap_file_location_queue.head)
         {
             free(dequeue(&available_swap_file_location_queue, NULL));
             swap_file_size -= PAGE_SIZE;
+        }
+
+        if (swap_file_fd != NOT_ASSIGNED)
+        {
+            check_syscall(ftruncate(swap_file_fd, 0), "userswap_free: ftruncate error");
         }
     }
 
@@ -337,7 +343,7 @@ static void sigsegv_handler(int signum, siginfo_t *si, void *unused)
         return;
     }
 
-    page_fault_handler(si->si_addr);
+    page_fault_handler((void *)(((uintptr_t)si->si_addr >> NUM_OFFSET_BITS) << NUM_OFFSET_BITS));
 }
 
 static void teardown_sig_handler(int signum)
@@ -391,7 +397,7 @@ static void page_fault_handler(void *address)
 
 static void compute_page_table_level_indices(void *address, int page_table_level_indices[])
 {
-    size_t address_value = (size_t)address;
+    uintptr_t address_value = (uintptr_t)address;
     address_value >>= NUM_OFFSET_BITS;
 
     for (int i = 0; i < 4; i++)
