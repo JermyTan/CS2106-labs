@@ -299,6 +299,7 @@ void *userswap_map(int fd, size_t size)
         check_syscall(NOT_ASSIGNED, "userswap_map: mmap error");
     }
 
+    check_syscall(lseek(fd, 0, SEEK_SET), "userswap_map: lseek error");
     check_syscall(pread(fd, address, rounded_size, 0), "userswap_map: pread error");
     check_syscall(pwrite(fd, address, rounded_size, 0), "userswap_map: pwrite error");
     check_syscall(mprotect(address, rounded_size, PROT_NONE), "userswap_map: mprotect PROT_NONE error");
