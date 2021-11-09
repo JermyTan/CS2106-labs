@@ -173,11 +173,11 @@ static page_table *get_page_table(int page_table_level_indices[]);
 static void evict_page(void *address);
 static void swap_from_file(page_table_entry *entry);
 static void swap_to_file(page_table_entry *entry);
-static void apply_page_action(void *address, size_t size, void *(*action)(void *address, page_action_context *action_context), void *context);
+static void apply_page_action(void *address, size_t size, void (*action)(void *address, page_action_context *action_context), void *context);
 static void store_mem_region(void *address, size_t size);
-static page_table_entry *insert_default_page_table_entry(void *address, page_action_context *action_context);
-static page_table_entry *insert_mapped_file_page_table_entry(void *address, page_action_context *action_context);
-static void *clean_up_page(void *address, page_action_context *action_context);
+static void insert_page_table_entry(void *address, page_action_context *action_context);
+static void insert_secondary_storage_info(void *address, page_action_context *action_context);
+static void clean_up_page(void *address, page_action_context *action_context);
 static void free_swap_file_location(page_table_entry *entry);
 static void clean_up_page_tables(int level, page_table *table, int page_table_level_indices[]);
 
@@ -252,7 +252,7 @@ void *userswap_alloc(size_t size)
         check_syscall(NOT_ASSIGNED, "userswap_alloc: mmap error");
     }
 
-    apply_page_action(address, rounded_size, (void *(*)(void *, page_action_context *))insert_default_page_table_entry, NULL);
+    apply_page_action(address, rounded_size, insert_page_table_entry, NULL);
 
     store_mem_region(address, rounded_size);
 
@@ -289,24 +289,20 @@ void userswap_free(void *mem)
 
 void *userswap_map(int fd, size_t size)
 {
-    setup_sigsegv_handler();
-
     size_t rounded_size = round_up_mem_size(size);
-    void *address = mmap(NULL, rounded_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, NOT_ASSIGNED, 0);
-
-    if (address == MAP_FAILED)
-    {
-        check_syscall(NOT_ASSIGNED, "userswap_map: mmap error");
-    }
+    void *address = userswap_alloc(rounded_size);
 
     check_syscall(lseek(fd, 0, SEEK_SET), "userswap_map: lseek error");
-    check_syscall(pread(fd, address, rounded_size, 0), "userswap_map: pread error");
-    check_syscall(pwrite(fd, address, rounded_size, 0), "userswap_map: pwrite error");
-    check_syscall(mprotect(address, rounded_size, PROT_NONE), "userswap_map: mprotect PROT_NONE error");
 
-    apply_page_action(address, rounded_size, (void *(*)(void *, page_action_context *))insert_mapped_file_page_table_entry, &fd);
+    struct stat sb;
+    check_syscall(fstat(fd, &sb), "userswap_map: fstat error");
 
-    store_mem_region(address, rounded_size);
+    if ((size_t)sb.st_size < rounded_size)
+    {
+        check_syscall(ftruncate(fd, rounded_size), "userswap_map: ftruncate error");
+    }
+
+    apply_page_action(address, rounded_size, insert_secondary_storage_info, &fd);
 
     return address;
 }
@@ -489,7 +485,7 @@ static void swap_from_file(page_table_entry *entry)
     check_syscall(pread(entry->secondary_storage_fd, entry->address, PAGE_SIZE, entry->secondary_storage_location), "swap_from_file: pread error");
 }
 
-static void apply_page_action(void *address, size_t size, void *(*action)(void *address, page_action_context *action_context), void *context)
+static void apply_page_action(void *address, size_t size, void (*action)(void *address, page_action_context *action_context), void *context)
 {
     size_t num_pages = size / PAGE_SIZE;
     page_action_context action_context = {0, context};
@@ -511,7 +507,7 @@ static void store_mem_region(void *address, size_t size)
     enqueue(&mem_region_queue, new_mem_region);
 }
 
-static page_table_entry *insert_default_page_table_entry(void *address, page_action_context *unused)
+static void insert_page_table_entry(void *address, page_action_context *unused)
 {
     int page_table_level_indices[4];
     compute_page_table_level_indices(address, page_table_level_indices);
@@ -527,21 +523,22 @@ static page_table_entry *insert_default_page_table_entry(void *address, page_act
 
     table->entries[page_table_level_indices[LEVEL_ONE]] = new_entry;
     table->num_filled_entries++;
-
-    return new_entry;
 }
 
-static page_table_entry *insert_mapped_file_page_table_entry(void *address, page_action_context *action_context)
+static void insert_secondary_storage_info(void *address, page_action_context *action_context)
 {
-    page_table_entry *new_entry = insert_default_page_table_entry(address, NULL);
+    int page_table_level_indices[4];
+    compute_page_table_level_indices(address, page_table_level_indices);
 
-    new_entry->secondary_storage_location = action_context->offset;
-    new_entry->secondary_storage_fd = *(int *)action_context->context;
+    page_table *table = get_page_table(page_table_level_indices);
 
-    return new_entry;
+    page_table_entry *entry = table->entries[page_table_level_indices[LEVEL_ONE]];
+
+    entry->secondary_storage_location = action_context->offset;
+    entry->secondary_storage_fd = *(int *)action_context->context;
 }
 
-static void *clean_up_page(void *address, page_action_context *unused)
+static void clean_up_page(void *address, page_action_context *unused)
 {
     int page_table_level_indices[4];
     compute_page_table_level_indices(address, page_table_level_indices);
@@ -562,8 +559,6 @@ static void *clean_up_page(void *address, page_action_context *unused)
     evict_page(entry->address);
 
     clean_up_page_tables(LEVEL_FOUR, &page_table_directory, page_table_level_indices);
-
-    return NULL;
 }
 
 static void free_swap_file_location(page_table_entry *entry)
