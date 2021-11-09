@@ -5,10 +5,10 @@ In page_fault_handler:
 - compute_page_table_level_indices only involves local variables so it can be executed concurrently
   by multiple threads.
 - Although get_page_table involves the global variable page_table_directory, it can also be executed
-  concurrently as we are only retrieving the pointer to the level one page table. Additionally, lines
-  373 - 381 will not be executed as the page table is guaranteed to exist as the program has previously
+  concurrently as we are only retrieving the pointer to the level one page table (readonly). Additionally, 
+  lines 415 - 423 will not be executed as the page table is guaranteed to exist as the program has previously
   inserted all the relevant entries in userswap_alloc and userswap_map.
-- The only section which needs to be enclosed with a mutex lock will be the lines 325 - 347. This is so
+- The only section which needs to be enclosed with a mutex lock will be the lines 367 - 389. This is so
   that multiple threads from the same non-resident page entering page_fault_handler will not execute
-  lines 327 - 342 multiple times. This ensures page_table_entry_queue only contains unique page table
+  lines 369 - 384 multiple times. This ensures page_table_entry_queue only contains unique page table
   entries and the total_resident_mem_size is correctly tracked (no double counting).
